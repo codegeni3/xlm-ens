@@ -38,7 +38,7 @@ impl NftContract {
         owner: Address,
         metadata_uri: Option<String>,
     ) -> Result<(), NftError> {
-        let key = DataKey::Token(token_id);
+        let key = DataKey::Token(token_id.clone());
         if env.storage().persistent().has(&key) {
             return Err(NftError::AlreadyMinted);
         }
@@ -85,7 +85,7 @@ impl NftContract {
         record.approved = None;
         env.storage()
             .persistent()
-            .set(&DataKey::Token(token_id), &record);
+            .set(&DataKey::Token(token_id.clone()), &record);
         reindex_owner_token(env, &previous_owner, &record.owner, &token_id);
         Ok(())
     }
