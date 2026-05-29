@@ -33,6 +33,21 @@ impl RegistryEntry {
     }
 }
 
+/// Issue #213: Lifecycle state of a name, so callers can branch on the state
+/// directly instead of inferring it from `resolve`/`register` errors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum NameState {
+    /// No entry exists for this name.
+    Missing,
+    /// Registered and not yet expired.
+    Active,
+    /// Expired but still within the grace period (only the owner may renew).
+    GracePeriod,
+    /// Past the grace period; anyone may claim/register it.
+    Claimable,
+}
+
 #[derive(Clone)]
 #[contracttype]
 enum DataKey {
@@ -126,6 +141,29 @@ impl RegistryContract {
             return Err(RegistryError::NotActive);
         }
         Ok(entry)
+    }
+
+    /// Issue #213: Read-only lifecycle state of a name, distinguishing active,
+    /// grace-period, claimable, and missing names without forcing callers to
+    /// infer the state from `resolve`/`register` errors. Unknown or invalid
+    /// names report as [`NameState::Missing`].
+    pub fn name_state(env: Env, name: String, now_unix: u64) -> NameState {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, RegistryEntry>(&DataKey::Entry(name))
+        {
+            None => NameState::Missing,
+            Some(entry) => {
+                if entry.is_active_at(now_unix) {
+                    NameState::Active
+                } else if entry.is_claimable_at(now_unix) {
+                    NameState::Claimable
+                } else {
+                    NameState::GracePeriod
+                }
+            }
+        }
     }
 
     pub fn check_owner(

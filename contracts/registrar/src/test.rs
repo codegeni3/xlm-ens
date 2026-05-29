@@ -179,6 +179,62 @@ mod tests {
     }
 
     #[test]
+    fn quote_renewal_reports_current_and_extended_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id);
+
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "alice");
+        let name = String::from_str(&env, "alice.xlm");
+
+        let reg_quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &reg_quote.fee_stroops, &100);
+
+        let renewal = client.quote_renewal(&name, &2, &200);
+        assert_eq!(renewal.current_expiry_unix, reg_quote.expiry_unix);
+        assert!(renewal.extended_expiry_unix > renewal.current_expiry_unix);
+        assert_eq!(
+            renewal.grace_period_ends_at,
+            renewal.extended_expiry_unix + GRACE_PERIOD_SECONDS
+        );
+        // 5-char label → 250_000_000 stroops/year × 2 years.
+        assert_eq!(renewal.fee_stroops, 500_000_000);
+        assert_eq!(renewal.pricing.annual_fee_stroops, 250_000_000);
+        assert_eq!(renewal.pricing.duration_years, 2);
+    }
+
+    #[test]
+    fn quote_renewal_fails_for_unregistered_name() {
+        let env = Env::default();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id);
+
+        let name = String::from_str(&env, "ghost.xlm");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.quote_renewal(&name, &1, &100);
+        }));
+        assert!(
+            result.is_err(),
+            "quote_renewal should fail for an unregistered name"
+        );
+    }
+
+    #[test]
+    fn pricing_policy_version_is_exposed() {
+        let env = Env::default();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+
+        assert_eq!(client.pricing_policy_version(), 1);
+    }
+
+    #[test]
     fn quote_includes_pricing_breakdown() {
         let env = Env::default();
         let contract_id = env.register(RegistrarContract, ());

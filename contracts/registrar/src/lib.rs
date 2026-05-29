@@ -32,6 +32,19 @@ pub struct RegistrationQuote {
     pub pricing: PricingBreakdown,
 }
 
+/// Issue #220: Renewal-specific quote. Unlike [`RegistrationQuote`] this is for
+/// an already-registered name and reports both the current and the post-renewal
+/// expiry so callers can see exactly how a renewal extends the lifecycle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct RenewalQuote {
+    pub fee_stroops: u64,
+    pub current_expiry_unix: u64,
+    pub extended_expiry_unix: u64,
+    pub grace_period_ends_at: u64,
+    pub pricing: PricingBreakdown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct RegistrarMetrics {
@@ -155,6 +168,54 @@ impl RegistrarContract {
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
         validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
         Ok(build_quote(&label, years, now_unix))
+    }
+
+    /// Issue #220: Read-only renewal quote for an existing registration.
+    ///
+    /// Mirrors the fee and expiry math in [`renew`] (renewing from the later of
+    /// the current expiry or `now`) without mutating state or requiring auth.
+    /// Returns [`RegistrarError::NotFound`] if the name has never been registered.
+    pub fn quote_renewal(
+        env: Env,
+        name: String,
+        years: u64,
+        now_unix: u64,
+    ) -> Result<RenewalQuote, RegistrarError> {
+        let label = extract_label_soroban(&env, &name).map_err(|_| RegistrarError::Validation)?;
+        validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
+
+        let record = env
+            .storage()
+            .persistent()
+            .get::<_, RegistrationRecord>(&DataKey::Registration(name))
+            .ok_or(RegistrarError::NotFound)?;
+
+        // Renewal extends from the later of the current expiry or now, matching `renew`.
+        let base_time = if record.expires_at > now_unix {
+            record.expires_at
+        } else {
+            now_unix
+        };
+        let extended_expiry_unix = expiry_from_now(base_time, years);
+        let annual_fee = price_for_label_length(label.len() as usize);
+
+        Ok(RenewalQuote {
+            fee_stroops: annual_fee.saturating_mul(years),
+            current_expiry_unix: record.expires_at,
+            extended_expiry_unix,
+            grace_period_ends_at: extended_expiry_unix.saturating_add(GRACE_PERIOD_SECONDS),
+            pricing: PricingBreakdown {
+                annual_fee_stroops: annual_fee,
+                duration_years: years,
+                premium_stroops: 0,
+            },
+        })
+    }
+
+    /// Issue #217: Read-only version of the pricing policy table so clients can
+    /// detect quote-policy changes without diffing individual quotes.
+    pub fn pricing_policy_version(_env: Env) -> u32 {
+        pricing::PRICING_POLICY_VERSION
     }
 
     pub fn register(

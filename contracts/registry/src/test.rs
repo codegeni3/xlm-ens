@@ -2,7 +2,7 @@
 mod tests {
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    use crate::{RegistryContract, RegistryContractClient, RegistryError};
+    use crate::{NameState, RegistryContract, RegistryContractClient, RegistryError};
 
     struct TimeHelper {
         pub now: u64,
@@ -52,6 +52,51 @@ mod tests {
         let resolved = client.resolve(&name, &transfer_time);
         assert_eq!(resolved.owner, next_owner);
         assert_eq!(client.names_for_owner(&next_owner).len(), 1);
+    }
+
+    #[test]
+    fn name_state_distinguishes_lifecycle_phases() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistryContract, ());
+        let client = RegistryContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "phase.xlm");
+        let time = TimeHelper::new();
+        let expires_at = time.future(1_000);
+        let grace_period_ends_at = time.future(2_000);
+
+        // Missing before any registration exists.
+        assert_eq!(client.name_state(&name, &time.now), NameState::Missing);
+
+        client.register(
+            &name,
+            &owner,
+            &None::<String>,
+            &None::<String>,
+            &time.now,
+            &expires_at,
+            &grace_period_ends_at,
+        );
+
+        // Active up to and including the expiry instant.
+        assert_eq!(client.name_state(&name, &time.future(500)), NameState::Active);
+        assert_eq!(client.name_state(&name, &expires_at), NameState::Active);
+        // Grace period between expiry and the grace-period end (inclusive).
+        assert_eq!(
+            client.name_state(&name, &time.future(1_500)),
+            NameState::GracePeriod
+        );
+        assert_eq!(
+            client.name_state(&name, &grace_period_ends_at),
+            NameState::GracePeriod
+        );
+        // Claimable strictly after the grace period ends.
+        assert_eq!(
+            client.name_state(&name, &(grace_period_ends_at + 1)),
+            NameState::Claimable
+        );
     }
 
     #[test]
