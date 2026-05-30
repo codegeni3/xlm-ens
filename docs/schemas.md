@@ -34,6 +34,27 @@ Notes:
 - `chain` must be a valid chain identifier (validated on-chain) and must have been registered.
 - The returned message is deterministic for a given `(name, route)` pair.
 
+### `build_reverse_message(address, primary_name, chain) -> string`
+
+Returns a JSON string shaped like:
+
+```json
+{
+  "type": "xlm-ns-reverse-resolution",
+  "address": "<stellar_address>",
+  "primary_name": "<fqdn>",
+  "destination_chain": "<chain>",
+  "resolver": "<destination_resolver>"
+}
+```
+
+Notes:
+
+- `address` and `primary_name` must be non-empty.
+- `primary_name` must be a fully-qualified `.xlm` name (validated on-chain).
+- `chain` must be a valid chain identifier (validated on-chain) and must have been registered.
+- The returned message is deterministic for a given `(address, primary_name, route)` pair.
+
 ## Resolver
 
 ### `ResolutionRecord`

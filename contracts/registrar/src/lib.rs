@@ -5,13 +5,14 @@ mod test;
 use expiry::expiry_from_now;
 use pricing::price_for_label_length;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal,
+    String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::{
     build_xlm_name, extract_label_soroban, validate_label_soroban,
     validate_registration_years_soroban,
 };
-use xlm_ns_common::GRACE_PERIOD_SECONDS;
+use xlm_ns_common::time::grace_period_ends_at;
 
 pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
 
@@ -122,17 +123,18 @@ impl RegistrarContract {
     pub fn reserve_label(env: Env, label: String) -> Result<(), RegistrarError> {
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
         let key = DataKey::Reserved(label.clone());
-        if env.storage().persistent().get::<_, bool>(&key).unwrap_or(false) {
-            env.events().publish(
-                (symbol_short!("reserved"), symbol_short!("skipped")),
-                label,
-            );
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&key)
+            .unwrap_or(false)
+        {
+            env.events()
+                .publish((symbol_short!("reserved"), symbol_short!("skipped")), label);
         } else {
             env.storage().persistent().set(&key, &true);
-            env.events().publish(
-                (symbol_short!("reserved"), symbol_short!("added")),
-                label,
-            );
+            env.events()
+                .publish((symbol_short!("reserved"), symbol_short!("added")), label);
         }
         Ok(())
     }
@@ -142,18 +144,29 @@ impl RegistrarContract {
         for label in labels.iter() {
             if validate_label_soroban(&label).is_ok() {
                 let key = DataKey::Reserved(label.clone());
-                if env.storage().persistent().get::<_, bool>(&key).unwrap_or(false) {
+                if env
+                    .storage()
+                    .persistent()
+                    .get::<_, bool>(&key)
+                    .unwrap_or(false)
+                {
                     env.events().publish(
                         (symbol_short!("reserved"), symbol_short!("skipped")),
                         label.clone(),
                     );
                 } else {
                     env.storage().persistent().set(&key, &true);
-                    env.events().publish((symbol_short!("reserved"), symbol_short!("added")), label.clone());
+                    env.events().publish(
+                        (symbol_short!("reserved"), symbol_short!("added")),
+                        label.clone(),
+                    );
                     added_count += 1;
                 }
             } else {
-                env.events().publish((symbol_short!("reserved"), symbol_short!("skipped")), label.clone());
+                env.events().publish(
+                    (symbol_short!("reserved"), symbol_short!("skipped")),
+                    label.clone(),
+                );
             }
         }
         Ok(added_count)
@@ -203,7 +216,7 @@ impl RegistrarContract {
             fee_stroops: annual_fee.saturating_mul(years),
             current_expiry_unix: record.expires_at,
             extended_expiry_unix,
-            grace_period_ends_at: extended_expiry_unix.saturating_add(GRACE_PERIOD_SECONDS),
+            grace_period_ends_at: grace_period_ends_at(extended_expiry_unix),
             pricing: PricingBreakdown {
                 annual_fee_stroops: annual_fee,
                 duration_years: years,
@@ -349,7 +362,7 @@ impl RegistrarContract {
         };
         let expires_at = expiry_from_now(base_time, years);
         record.expires_at = expires_at;
-        record.grace_period_ends_at = expires_at.saturating_add(GRACE_PERIOD_SECONDS);
+        record.grace_period_ends_at = grace_period_ends_at(expires_at);
         record.renewed_at = now_unix;
         record.fee_paid = record.fee_paid.saturating_add(payment_stroops);
         env.storage()
@@ -508,7 +521,7 @@ fn build_quote(label: &String, years: u64, now_unix: u64) -> RegistrationQuote {
     RegistrationQuote {
         fee_stroops: annual_fee.saturating_mul(years),
         expiry_unix,
-        grace_period_ends_at: expiry_unix.saturating_add(GRACE_PERIOD_SECONDS),
+        grace_period_ends_at: grace_period_ends_at(expiry_unix),
         pricing: PricingBreakdown {
             annual_fee_stroops: annual_fee,
             duration_years: years,
@@ -518,7 +531,7 @@ fn build_quote(label: &String, years: u64, now_unix: u64) -> RegistrationQuote {
 }
 
 pub fn can_renew(expiry_unix: u64, now_unix: u64) -> Result<bool, RegistrarError> {
-    let grace_period_end = expiry_unix.saturating_add(GRACE_PERIOD_SECONDS);
+    let grace_period_end = grace_period_ends_at(expiry_unix);
 
     if now_unix > grace_period_end {
         return Err(RegistrarError::RegistrationClaimable);

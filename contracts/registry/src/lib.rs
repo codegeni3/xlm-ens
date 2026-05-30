@@ -4,9 +4,11 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
+use xlm_ns_common::time::{is_active_at, is_claimable_at};
 use xlm_ns_common::{DEFAULT_TTL_SECONDS, MAX_METADATA_URI_LENGTH};
 
 pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
+pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -25,11 +27,11 @@ pub struct RegistryEntry {
 
 impl RegistryEntry {
     fn is_active_at(&self, now_unix: u64) -> bool {
-        now_unix <= self.expires_at
+        is_active_at(self.expires_at, now_unix)
     }
 
     fn is_claimable_at(&self, now_unix: u64) -> bool {
-        now_unix > self.grace_period_ends_at
+        is_claimable_at(self.grace_period_ends_at, now_unix)
     }
 }
 
@@ -348,6 +350,13 @@ impl RegistryContract {
     pub fn supports_admin_recovery(_env: Env) -> bool {
         ADMIN_RECOVERY_SUPPORTED
     }
+
+    /// Returns the current persistent-storage schema version for upgrade
+    /// planning. Future migrations should branch on this value before
+    /// rewriting any derived indexes.
+    pub fn storage_schema_version(_env: Env) -> u32 {
+        STORAGE_SCHEMA_VERSION
+    }
 }
 
 /// Inserts `name` into `owner`'s index without creating a corresponding
@@ -397,7 +406,7 @@ fn validate_lifecycle_timestamps(
     expires_at: u64,
     grace_period_ends_at: u64,
 ) -> Result<(), RegistryError> {
-    if expires_at < now_unix {
+    if !is_active_at(expires_at, now_unix) {
         return Err(RegistryError::InvalidExpiry);
     }
 
