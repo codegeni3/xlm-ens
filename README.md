@@ -120,13 +120,14 @@ stubs:
 
 #### CLI output modes
 
-All CLI commands accept `--output human` (default) or `--output json` for automation-friendly output.
+All CLI commands accept `--output human` (default), `--output json`, or `--output csv` for automation-friendly output.
 
 Examples:
 
 - `cargo run -p xlm-ns-cli -- resolve timmy.xlm --output json`
 - `cargo run -p xlm-ns-cli -- whois timmy.xlm --output json`
 - `cargo run -p xlm-ns-cli -- portfolio GDRA...OWNER_ADDR --output json`
+- `cargo run -p xlm-ns-cli -- portfolio GDRA...OWNER_ADDR --output csv`
 
 #### Contract spec artifacts (CI)
 

@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod export;
 mod output;
 mod signer;
 
@@ -26,7 +27,7 @@ struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
-    /// Output format for command results.
+    /// Output format. Use 'json' or 'csv' for machine-readable export suitable for piping or automation.
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, global = true)]
     output: OutputFormat,
 

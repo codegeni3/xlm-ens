@@ -72,6 +72,35 @@ Reverse lookup:
 cargo run -p xlm-ns-cli -- reverse-lookup "$XLM_NS_SIGNER_OPERATOR_PUBLIC"
 ```
 
+## Portfolio
+
+List names owned by an address:
+
+```sh
+cargo run -p xlm-ns-cli -- portfolio "$XLM_NS_SIGNER_OPERATOR_PUBLIC"
+```
+
+### Export formats
+
+The `portfolio` command supports three output modes:
+
+```sh
+# Human-readable table (default)
+cargo run -p xlm-ns-cli -- portfolio OWNER_ADDRESS
+
+# JSON array — suitable for jq, APIs, or storage
+cargo run -p xlm-ns-cli -- portfolio OWNER_ADDRESS --output json
+
+# CSV — suitable for spreadsheets or data pipelines
+cargo run -p xlm-ns-cli -- portfolio OWNER_ADDRESS --output csv \
+  > owner-export.csv
+```
+
+Each record includes: `name`, `owner`, `resolver`,
+`target_address`, `registered_at`, `expires_at`,
+`grace_period_ends_at`, and `status`
+(`active` | `grace` | `expired`).
+
 ## Text records
 
 Set a text record:
