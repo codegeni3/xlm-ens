@@ -23,8 +23,6 @@
     [],
     [],
     [],
-    [],
-    [],
     []
   ],
   "ledger": {
@@ -50,7 +48,7 @@
                     "symbol": "Forward"
                   },
                   {
-                    "string": "timmy.xlm"
+                    "string": "alice.xlm"
                   }
                 ]
               },
@@ -68,7 +66,7 @@
                             "string": "stellar"
                           },
                           "val": {
-                            "string": "GABC"
+                            "string": "GAAA"
                           }
                         }
                       ]
@@ -87,136 +85,7 @@
                       "symbol": "text_records"
                     },
                     "val": {
-                      "map": [
-                        {
-                          "key": {
-                            "string": "key-0"
-                          },
-                          "val": {
-                            "string": "updated"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-1"
-                          },
-                          "val": {
-                            "string": "value-1"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-10"
-                          },
-                          "val": {
-                            "string": "value-10"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-11"
-                          },
-                          "val": {
-                            "string": "value-11"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-12"
-                          },
-                          "val": {
-                            "string": "value-12"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-13"
-                          },
-                          "val": {
-                            "string": "value-13"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-14"
-                          },
-                          "val": {
-                            "string": "value-14"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-15"
-                          },
-                          "val": {
-                            "string": "value-15"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-2"
-                          },
-                          "val": {
-                            "string": "value-2"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-3"
-                          },
-                          "val": {
-                            "string": "value-3"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-4"
-                          },
-                          "val": {
-                            "string": "value-4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-5"
-                          },
-                          "val": {
-                            "string": "value-5"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-6"
-                          },
-                          "val": {
-                            "string": "value-6"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-7"
-                          },
-                          "val": {
-                            "string": "value-7"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-8"
-                          },
-                          "val": {
-                            "string": "value-8"
-                          }
-                        },
-                        {
-                          "key": {
-                            "string": "key-9"
-                          },
-                          "val": {
-                            "string": "value-9"
-                          }
-                        }
-                      ]
+                      "map": []
                     }
                   },
                   {
@@ -224,7 +93,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "500"
+                      "u64": "100"
                     }
                   }
                 ]
@@ -245,16 +114,181 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Reverse"
+                    "symbol": "Forward"
                   },
                   {
-                    "string": "GABC"
+                    "string": "pay.alice.xlm"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "string": "timmy.xlm"
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "addresses"
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "string": "stellar"
+                          },
+                          "val": {
+                            "string": "GAAA"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "owner"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "text_records"
+                    },
+                    "val": {
+                      "map": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "updated_at"
+                    },
+                    "val": {
+                      "u64": "101"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Forward"
+                  },
+                  {
+                    "string": "tip.alice.xlm"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "addresses"
+                    },
+                    "val": {
+                      "map": [
+                        {
+                          "key": {
+                            "string": "stellar"
+                          },
+                          "val": {
+                            "string": "GAAA"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "owner"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "text_records"
+                    },
+                    "val": {
+                      "map": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "updated_at"
+                    },
+                    "val": {
+                      "u64": "102"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Primary"
+                  },
+                  {
+                    "string": "GAAA"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "string": "tip.alice.xlm"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Reverse"
+                  },
+                  {
+                    "string": "GAAA"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "string": "tip.alice.xlm"
               }
             }
           },

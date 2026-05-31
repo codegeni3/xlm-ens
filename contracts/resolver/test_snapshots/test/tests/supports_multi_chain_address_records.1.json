@@ -1,10 +1,11 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
+    [],
     [],
     [],
     [],
@@ -48,6 +49,14 @@
                       "map": [
                         {
                           "key": {
+                            "string": "ethereum"
+                          },
+                          "val": {
+                            "string": "0x1234567890123456789012345678901234567890"
+                          }
+                        },
+                        {
+                          "key": {
                             "string": "stellar"
                           },
                           "val": {
@@ -78,7 +87,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "100"
+                      "u64": "101"
                     }
                   }
                 ]

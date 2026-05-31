@@ -1,12 +1,41 @@
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Map, String,
-    Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, Env,
+    IntoVal, Map, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::RegistryEntry;
 use xlm_ns_common::{MAX_TEXT_RECORDS, MAX_TEXT_RECORD_VALUE_LENGTH};
+
+// -------------------------------------------------------------------
+// #146: Centralized TTL extension policy
+// Soroban persistent entries age out unless explicitly bumped on every
+// write.  All ledger-count values below are conservative minimums —
+// operators can raise them without changing contract logic.
+// -------------------------------------------------------------------
+/// Minimum number of ledgers a persistent entry must remain live after
+/// every write.  Roughly 1 year at ~5 s / ledger.
+const PERSISTENT_LEDGER_TTL: u32 = 6_312_000; // ~1 year
+/// Threshold below which the entry is re-bumped (avoids unnecessary
+/// work when the entry already has plenty of ledgers remaining).
+const PERSISTENT_LEDGER_THRESHOLD: u32 = PERSISTENT_LEDGER_TTL / 2;
+
+/// Bump the TTL for all keys written during a resolver mutation.
+/// Call this after every `env.storage().persistent().set(...)` on a
+/// Forward / Reverse / Primary key so no entry silently ages out.
+fn extend_persistent_ttl(env: &Env, key: &DataKey) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, PERSISTENT_LEDGER_THRESHOLD, PERSISTENT_LEDGER_TTL);
+}
+
+/// Bump the instance storage TTL so the contract itself stays live.
+fn extend_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(PERSISTENT_LEDGER_THRESHOLD, PERSISTENT_LEDGER_TTL);
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -19,6 +48,18 @@ pub struct ResolutionRecord {
 
 // For backwards compatibility, use a default chain identifier
 const DEFAULT_CHAIN: &str = "stellar";
+
+// #154: Maximum number of operations in a single batch_set call
+const MAX_BATCH_OPS: usize = 16;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum BatchOp {
+    /// Update the Stellar (default-chain) address
+    SetAddress(String),
+    /// Set or update a text record (key, value)
+    SetText(String, String),
+}
 
 #[derive(Clone)]
 #[contracttype]
@@ -42,6 +83,51 @@ pub enum ResolverError {
     InvalidChain = 7,
     // #314: text-record key failed normalization check
     InvalidKey = 8,
+    // #154: batch payload exceeds the allowed operation count
+    BatchTooLarge = 9,
+}
+
+// -------------------------------------------------------------------
+// #141: Resolver events
+// -------------------------------------------------------------------
+
+/// Emitted when a forward record (name → address) is created or updated.
+#[contractevent]
+pub struct ForwardUpdated {
+    pub name: String,
+    pub address: String,
+    pub chain: String,
+    pub updated_at: u64,
+}
+
+/// Emitted when a reverse mapping (address → name) is written.
+#[contractevent]
+pub struct ReverseUpdated {
+    pub address: String,
+    pub name: String,
+}
+
+/// Emitted when a primary name is set for an address.
+#[contractevent]
+pub struct PrimaryNameSet {
+    pub address: String,
+    pub name: String,
+}
+
+/// Emitted when a text record is created or updated.
+#[contractevent]
+pub struct TextRecordUpdated {
+    pub name: String,
+    pub key: String,
+    pub value: String,
+    pub updated_at: u64,
+}
+
+/// Emitted when a record (and its reverse/primary) is removed.
+#[contractevent]
+pub struct RecordRemoved {
+    pub name: String,
+    pub former_address: Option<String>,
 }
 
 #[contract]
@@ -54,6 +140,7 @@ impl ResolverContract {
             return Err(ResolverError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Registry, &registry);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -117,12 +204,26 @@ impl ResolverContract {
             text_records,
             updated_at: now_unix,
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Forward(name.clone()), &record);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Reverse(address), &name);
+
+        let fwd_key = DataKey::Forward(name.clone());
+        let rev_key = DataKey::Reverse(address.clone());
+
+        env.storage().persistent().set(&fwd_key, &record);
+        extend_persistent_ttl(&env, &fwd_key); // #146
+        env.storage().persistent().set(&rev_key, &name);
+        extend_persistent_ttl(&env, &rev_key); // #146
+        extend_instance_ttl(&env); // #146
+
+        // #141: Emit forward + reverse events
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("fwd_set")),
+            (name.clone(), address.clone(), String::from_str(&env, DEFAULT_CHAIN), now_unix),
+        );
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("rev_set")),
+            (address, name),
+        );
+
         Ok(())
     }
 
@@ -152,14 +253,27 @@ impl ResolverContract {
                 }
             }
             // Set new reverse mapping
-            env.storage()
-                .persistent()
-                .set(&DataKey::Reverse(address.clone()), &name);
+            let rev_key = DataKey::Reverse(address.clone());
+            env.storage().persistent().set(&rev_key, &name);
+            extend_persistent_ttl(&env, &rev_key); // #146
+
+            // #141: Emit reverse event
+            env.events().publish(
+                (symbol_short!("resolver"), symbol_short!("rev_set")),
+                (address.clone(), name.clone()),
+            );
         }
 
-        record.addresses.set(chain, address);
+        record.addresses.set(chain.clone(), address.clone());
         record.updated_at = now_unix;
-        put_record(&env, &name, &record);
+        put_record(&env, &name, &record); // TTL extended inside put_record
+
+        // #141: Emit forward address event
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("fwd_set")),
+            (name, address, chain, now_unix),
+        );
+
         Ok(())
     }
 
@@ -179,8 +293,6 @@ impl ResolverContract {
         now_unix: u64,
     ) -> Result<(), ResolverError> {
         // Issue #314: Validate text-record key normalization.
-        // Keys must be 1–64 bytes, lowercase ASCII, and contain only
-        // letters, digits, dots (.), dashes (-), or underscores (_).
         validate_text_record_key(&key).map_err(|_| ResolverError::InvalidKey)?;
 
         // Issue #315: Validate text record value size
@@ -195,9 +307,16 @@ impl ResolverContract {
         {
             return Err(ResolverError::TooManyTextRecords);
         }
-        record.text_records.set(key, value);
+        record.text_records.set(key.clone(), value.clone());
         record.updated_at = now_unix;
-        put_record(&env, &name, &record);
+        put_record(&env, &name, &record); // TTL extended inside put_record
+
+        // #141: Emit text-record event
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("txt_set")),
+            (name, key, value, now_unix),
+        );
+
         Ok(())
     }
 
@@ -216,9 +335,17 @@ impl ResolverContract {
         } else {
             return Err(ResolverError::Unauthorized);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::Primary(address), &name);
+        let prim_key = DataKey::Primary(address.clone());
+        env.storage().persistent().set(&prim_key, &name);
+        extend_persistent_ttl(&env, &prim_key); // #146
+        extend_instance_ttl(&env); // #146
+
+        // #141: Emit primary-name event
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("prim_set")),
+            (address, name),
+        );
+
         Ok(())
     }
 
@@ -227,18 +354,29 @@ impl ResolverContract {
         assert_owner(&env, &name, &record, &caller, 0)?;
 
         // Clean up reverse mappings for all chains, particularly Stellar
-        if let Some(stellar_addr) = record.addresses.get(String::from_str(&env, DEFAULT_CHAIN)) {
+        let former_address =
+            record
+                .addresses
+                .get(String::from_str(&env, DEFAULT_CHAIN));
+        if let Some(ref stellar_addr) = former_address {
             env.storage()
                 .persistent()
                 .remove(&DataKey::Reverse(stellar_addr.clone()));
             env.storage()
                 .persistent()
-                .remove(&DataKey::Primary(stellar_addr));
+                .remove(&DataKey::Primary(stellar_addr.clone()));
         }
 
         env.storage()
             .persistent()
             .remove(&DataKey::Forward(name.clone()));
+
+        // #141: Emit removal event
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("removed")),
+            (name, former_address),
+        );
+
         Ok(())
     }
 
@@ -315,6 +453,106 @@ impl ResolverContract {
         }
         out
     }
+
+    // -------------------------------------------------------------------
+    // #154: Batch update entrypoint
+    // Applies a sequence of address and text-record mutations in a single
+    // contract invocation.  Auth is checked once for the whole batch.
+    // Size is capped at MAX_BATCH_OPS to bound resource usage.
+    // -------------------------------------------------------------------
+    pub fn batch_set(
+        env: Env,
+        name: String,
+        caller: Address,
+        ops: Vec<BatchOp>,
+        now_unix: u64,
+    ) -> Result<u32, ResolverError> {
+        validate_fqdn_soroban(&name).map_err(|_| ResolverError::Validation)?;
+
+        if ops.len() as usize > MAX_BATCH_OPS {
+            return Err(ResolverError::BatchTooLarge);
+        }
+
+        let mut record = get_record(&env, &name)?;
+        // Auth check: single auth call covers the entire batch
+        assert_owner(&env, &name, &record, &caller, now_unix)?;
+
+        let mut applied: u32 = 0;
+
+        for op in ops.iter() {
+            match op {
+                BatchOp::SetAddress(new_addr) => {
+                    // Handle Stellar reverse mapping cleanup
+                    if let Some(old_addr) =
+                        record.addresses.get(String::from_str(&env, DEFAULT_CHAIN))
+                    {
+                        if old_addr != new_addr {
+                            env.storage()
+                                .persistent()
+                                .remove(&DataKey::Reverse(old_addr.clone()));
+                            env.storage()
+                                .persistent()
+                                .remove(&DataKey::Primary(old_addr));
+                        }
+                    }
+                    let rev_key = DataKey::Reverse(new_addr.clone());
+                    env.storage().persistent().set(&rev_key, &name);
+                    extend_persistent_ttl(&env, &rev_key); // #146
+                    record
+                        .addresses
+                        .set(String::from_str(&env, DEFAULT_CHAIN), new_addr.clone());
+
+                    // #141: emit event
+                    env.events().publish(
+                        (symbol_short!("resolver"), symbol_short!("fwd_set")),
+                        (
+                            name.clone(),
+                            new_addr.clone(),
+                            String::from_str(&env, DEFAULT_CHAIN),
+                            now_unix,
+                        ),
+                    );
+                    env.events().publish(
+                        (symbol_short!("resolver"), symbol_short!("rev_set")),
+                        (new_addr, name.clone()),
+                    );
+                    applied += 1;
+                }
+                BatchOp::SetText(key, value) => {
+                    // Validate key
+                    if validate_text_record_key(&key).is_err() {
+                        // partial-failure semantics: skip invalid ops rather than
+                        // aborting the entire batch so callers get best-effort
+                        // application.
+                        continue;
+                    }
+                    if (value.len() as usize) > MAX_TEXT_RECORD_VALUE_LENGTH {
+                        continue;
+                    }
+                    if !record.text_records.contains_key(key.clone())
+                        && record.text_records.len() >= MAX_TEXT_RECORDS as u32
+                    {
+                        // At limit and this is a new key — skip
+                        continue;
+                    }
+                    record.text_records.set(key.clone(), value.clone());
+
+                    // #141: emit event
+                    env.events().publish(
+                        (symbol_short!("resolver"), symbol_short!("txt_set")),
+                        (name.clone(), key, value, now_unix),
+                    );
+                    applied += 1;
+                }
+            }
+        }
+
+        record.updated_at = now_unix;
+        put_record(&env, &name, &record); // TTL extended inside put_record
+        extend_instance_ttl(&env); // #146
+
+        Ok(applied)
+    }
 }
 
 fn get_registry(env: &Env) -> Result<Address, ResolverError> {
@@ -372,10 +610,11 @@ fn get_record(env: &Env, name: &String) -> Result<ResolutionRecord, ResolverErro
         .ok_or(ResolverError::RecordNotFound)
 }
 
+/// Write a record and unconditionally extend its TTL (#146).
 fn put_record(env: &Env, name: &String, record: &ResolutionRecord) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Forward(name.clone()), record);
+    let key = DataKey::Forward(name.clone());
+    env.storage().persistent().set(&key, record);
+    extend_persistent_ttl(env, &key); // #146
 }
 
 /// Issue #314: Validate a text-record key.

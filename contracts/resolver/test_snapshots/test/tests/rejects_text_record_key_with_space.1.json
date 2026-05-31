@@ -1,11 +1,10 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
-    [],
     [],
     [],
     []
@@ -33,7 +32,7 @@
                     "symbol": "Forward"
                   },
                   {
-                    "string": "timmy.xlm"
+                    "string": "alice.xlm"
                   }
                 ]
               },
@@ -108,7 +107,7 @@
               },
               "durability": "persistent",
               "val": {
-                "string": "timmy.xlm"
+                "string": "alice.xlm"
               }
             }
           },

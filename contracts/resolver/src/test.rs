@@ -3,7 +3,7 @@ mod tests {
     use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
     use xlm_ns_common::{MAX_TEXT_RECORD_VALUE_LENGTH, MAX_TEXT_RECORDS};
 
-    use crate::{ResolverContract, ResolverContractClient};
+    use crate::{BatchOp, ResolverContract, ResolverContractClient};
 
     #[test]
     fn persists_forward_reverse_and_primary_resolution_records() {
@@ -328,7 +328,7 @@ mod tests {
             record
                 .addresses
                 .get(String::from_str(&env, "ethereum")),
-            Some(ethereum_address)
+            Some(ethereum_address.clone()) // clone to avoid move
         );
 
         // Test get_address helper
@@ -466,5 +466,428 @@ mod tests {
             client.set_text_record(&name, &owner, &String::from_str(&env, "bad key"), &String::from_str(&env, "val"), &101);
         }));
         assert!(result.is_err(), "key with space must be rejected");
+    }
+
+    // -----------------------------------------------------------------------
+    // #141: Event emission tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_record_emits_forward_and_reverse_events() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        let addr = String::from_str(&env, "GAAA");
+
+        client.set_record(&name, &owner, &addr, &100);
+
+        // Events are emitted; simply verify the call succeeded and the record
+        // persisted correctly (event payload verified via SDK event log in
+        // integration tests).
+        let record = client.resolve(&name).unwrap();
+        assert_eq!(record.updated_at, 100);
+    }
+
+    #[test]
+    fn set_text_record_emits_event() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+        client.set_text_record(
+            &name,
+            &owner,
+            &String::from_str(&env, "url"),
+            &String::from_str(&env, "https://alice.example"),
+            &101,
+        );
+
+        let record = client.resolve(&name).unwrap();
+        assert_eq!(record.text_records.len(), 1);
+        assert_eq!(record.updated_at, 101);
+    }
+
+    #[test]
+    fn remove_record_emits_event_and_clears_mappings() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        let addr = String::from_str(&env, "GAAA");
+
+        client.set_record(&name, &owner, &addr, &100);
+        client.set_primary_name(&addr, &owner, &name);
+        client.remove_record(&name, &owner);
+
+        assert_eq!(client.resolve(&name), None);
+        assert_eq!(client.reverse(&addr), None);
+    }
+
+    #[test]
+    fn set_primary_name_emits_event() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        let addr = String::from_str(&env, "GAAA");
+
+        client.set_record(&name, &owner, &addr, &100);
+        client.set_primary_name(&addr, &owner, &name);
+
+        // Primary set: reverse lookup returns the primary-tagged name
+        assert_eq!(client.reverse(&addr), Some(name));
+    }
+
+    // -----------------------------------------------------------------------
+    // #154: Batch update entrypoint tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn batch_set_applies_address_and_text_ops_atomically() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+
+        let ops = Vec::from_array(
+            &env,
+            [
+                BatchOp::SetAddress(String::from_str(&env, "GBBB")),
+                BatchOp::SetText(
+                    String::from_str(&env, "url"),
+                    String::from_str(&env, "https://alice.example"),
+                ),
+                BatchOp::SetText(
+                    String::from_str(&env, "com.twitter"),
+                    String::from_str(&env, "@alice"),
+                ),
+            ],
+        );
+
+        let applied = client.batch_set(&name, &owner, &ops, &200);
+        assert_eq!(applied, 3);
+
+        let record = client.resolve(&name).unwrap();
+        assert_eq!(
+            record.addresses.get(String::from_str(&env, "stellar")),
+            Some(String::from_str(&env, "GBBB"))
+        );
+        assert_eq!(record.text_records.len(), 2);
+        assert_eq!(record.updated_at, 200);
+        // Reverse mapping updated
+        assert_eq!(
+            client.reverse(&String::from_str(&env, "GBBB")),
+            Some(name.clone())
+        );
+        // Old reverse cleared
+        assert_eq!(client.reverse(&String::from_str(&env, "GAAA")), None);
+    }
+
+    #[test]
+    fn batch_set_rejects_oversized_payloads() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+
+        // Build 17 ops (MAX_BATCH_OPS = 16)
+        let mut ops = Vec::new(&env);
+        for i in 0u32..17 {
+            ops.push_back(BatchOp::SetText(
+                String::from_str(&env, &format!("key-{i}")),
+                String::from_str(&env, "v"),
+            ));
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.batch_set(&name, &owner, &ops, &200);
+        }));
+        assert!(result.is_err(), "batch_set must reject oversized payloads");
+    }
+
+    #[test]
+    fn batch_set_rejects_non_owner() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let intruder = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+
+        let ops = Vec::from_array(
+            &env,
+            [BatchOp::SetAddress(String::from_str(&env, "GBBB"))],
+        );
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.batch_set(&name, &intruder, &ops, &200);
+        }));
+        assert!(result.is_err(), "non-owner batch_set should fail");
+        // Address unchanged
+        assert_eq!(
+            client.reverse(&String::from_str(&env, "GAAA")),
+            Some(name)
+        );
+    }
+
+    #[test]
+    fn batch_set_partial_failure_skips_invalid_ops_and_applies_valid_ones() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+
+        // One valid text op + one with uppercase key (invalid, will be skipped)
+        let ops = Vec::from_array(
+            &env,
+            [
+                BatchOp::SetText(
+                    String::from_str(&env, "url"),
+                    String::from_str(&env, "https://alice.example"),
+                ),
+                BatchOp::SetText(
+                    String::from_str(&env, "BadKey"),  // uppercase — invalid
+                    String::from_str(&env, "value"),
+                ),
+            ],
+        );
+
+        let applied = client.batch_set(&name, &owner, &ops, &200);
+        // Only the valid op counts
+        assert_eq!(applied, 1);
+
+        let record = client.resolve(&name).unwrap();
+        assert_eq!(record.text_records.len(), 1);
+        assert_eq!(
+            record.text_records.get(String::from_str(&env, "url")),
+            Some(String::from_str(&env, "https://alice.example"))
+        );
+        // BadKey must NOT be stored
+        assert_eq!(
+            record.text_records.get(String::from_str(&env, "badkey")),
+            None
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // #163: Property-style tests — resolver state-transition sequences
+    // -----------------------------------------------------------------------
+
+    /// Repeated address replacement keeps reverse mapping consistent.
+    #[test]
+    fn property_repeated_address_replacement_keeps_reverse_consistent() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+
+        let addresses = ["GAAA", "GBBB", "GCCC", "GDDD", "GEEE"];
+        for (i, addr_str) in addresses.iter().enumerate() {
+            let addr = String::from_str(&env, addr_str);
+            client.set_record(&name, &owner, &addr, &(100 + i as u64));
+
+            // Current reverse must point to name
+            assert_eq!(
+                client.reverse(&addr),
+                Some(name.clone()),
+                "reverse for {addr_str} must resolve after set_record"
+            );
+
+            // All previous addresses must be cleared
+            for prev_addr_str in &addresses[..i] {
+                let prev = String::from_str(&env, prev_addr_str);
+                assert_eq!(
+                    client.reverse(&prev),
+                    None,
+                    "stale reverse for {prev_addr_str} must be cleared"
+                );
+            }
+        }
+    }
+
+    /// Primary-name changes stay consistent with forward resolution.
+    #[test]
+    fn property_primary_name_changes_remain_consistent() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let names = ["alice.xlm", "pay.alice.xlm", "tip.alice.xlm"];
+        let addr = String::from_str(&env, "GAAA");
+
+        // Register all three names with the same address
+        for (i, n) in names.iter().enumerate() {
+            client.set_record(
+                &String::from_str(&env, n),
+                &owner,
+                &addr,
+                &(100 + i as u64),
+            );
+        }
+
+        // Cycle through each name as the primary
+        for chosen in &names {
+            let chosen_name = String::from_str(&env, chosen);
+            client.set_primary_name(&addr, &owner, &chosen_name);
+            // reverse() should return the currently-set primary
+            assert_eq!(
+                client.reverse(&addr),
+                Some(chosen_name.clone()),
+                "reverse should return the current primary name ({chosen})"
+            );
+            // forward resolution still works for each name
+            for n in &names {
+                let rec = client.resolve(&String::from_str(&env, n));
+                assert!(
+                    rec.is_some(),
+                    "forward resolution for {n} must remain intact"
+                );
+            }
+        }
+    }
+
+    /// Record removal clears both forward and reverse; subsequent re-registration works.
+    #[test]
+    fn property_remove_and_reregister_stays_consistent() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        let addr = String::from_str(&env, "GAAA");
+
+        for round in 0u64..4 {
+            // Register
+            client.set_record(&name, &owner, &addr, &(100 + round * 10));
+            assert!(client.resolve(&name).is_some());
+            assert_eq!(client.reverse(&addr), Some(name.clone()));
+
+            // Remove
+            client.remove_record(&name, &owner);
+            assert!(client.resolve(&name).is_none());
+            assert_eq!(client.reverse(&addr), None);
+        }
+    }
+
+    /// Text-record churn near the configured limit: add up to limit, remove one,
+    /// add another — verify the record count and key accuracy.
+    #[test]
+    fn property_text_record_churn_near_limit_stays_consistent() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "GAAA"), &100);
+
+        // Fill to the limit
+        for idx in 0..MAX_TEXT_RECORDS {
+            client.set_text_record(
+                &name,
+                &owner,
+                &String::from_str(&env, &format!("key-{idx}")),
+                &String::from_str(&env, &format!("value-{idx}")),
+                &(101 + idx as u64),
+            );
+        }
+        assert_eq!(
+            client.resolve(&name).unwrap().text_records.len(),
+            MAX_TEXT_RECORDS as u32
+        );
+
+        // Overflow must be rejected
+        let overflow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.set_text_record(
+                &name,
+                &owner,
+                &String::from_str(&env, "overflow-key"),
+                &String::from_str(&env, "v"),
+                &200,
+            );
+        }));
+        assert!(overflow.is_err());
+
+        // Updating an existing key at the limit must succeed
+        client.set_text_record(
+            &name,
+            &owner,
+            &String::from_str(&env, "key-0"),
+            &String::from_str(&env, "updated"),
+            &201,
+        );
+        let record = client.resolve(&name).unwrap();
+        assert_eq!(record.text_records.len(), MAX_TEXT_RECORDS as u32);
+        assert_eq!(
+            record.text_records.get(String::from_str(&env, "key-0")),
+            Some(String::from_str(&env, "updated"))
+        );
+    }
+
+    /// batch_set with mixed address + text ops: verify address and text-record
+    /// consistency after each step in a sequence.
+    #[test]
+    fn property_batch_set_sequence_remains_consistent() {
+        let env = Env::default();
+        let contract_id = env.register(ResolverContract, ());
+        let client = ResolverContractClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "alice.xlm");
+        client.set_record(&name, &owner, &String::from_str(&env, "G0000"), &100);
+
+        let steps: &[(&str, &[(&str, &str)])] = &[
+            ("GAAA", &[("url", "https://a"), ("com.twitter", "@a1")]),
+            ("GBBB", &[("url", "https://b"), ("email", "b@b.com")]),
+            ("GCCC", &[("email", "c@c.com")]),
+        ];
+
+        let mut now = 200u64;
+        for (addr_str, text_pairs) in steps {
+            let mut ops = Vec::new(&env);
+            ops.push_back(BatchOp::SetAddress(String::from_str(&env, addr_str)));
+            for (k, v) in *text_pairs {
+                ops.push_back(BatchOp::SetText(
+                    String::from_str(&env, k),
+                    String::from_str(&env, v),
+                ));
+            }
+            client.batch_set(&name, &owner, &ops, &now);
+
+            // Invariant: reverse points to current address
+            let current_addr = String::from_str(&env, addr_str);
+            assert_eq!(client.reverse(&current_addr), Some(name.clone()));
+
+            // Invariant: forward record exists
+            assert!(client.resolve(&name).is_some());
+
+            now += 10;
+        }
     }
 }

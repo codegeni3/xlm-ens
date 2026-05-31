@@ -1,10 +1,11 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
+    [],
     [],
     [],
     [],
@@ -70,7 +71,16 @@
                       "symbol": "text_records"
                     },
                     "val": {
-                      "map": []
+                      "map": [
+                        {
+                          "key": {
+                            "string": "key1"
+                          },
+                          "val": {
+                            "string": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                          }
+                        }
+                      ]
                     }
                   },
                   {
@@ -78,7 +88,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "100"
+                      "u64": "101"
                     }
                   }
                 ]

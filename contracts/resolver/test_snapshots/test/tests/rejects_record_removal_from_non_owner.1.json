@@ -43,10 +43,19 @@
                 "map": [
                   {
                     "key": {
-                      "symbol": "address"
+                      "symbol": "addresses"
                     },
                     "val": {
-                      "string": "GABC"
+                      "map": [
+                        {
+                          "key": {
+                            "string": "stellar"
+                          },
+                          "val": {
+                            "string": "GABC"
+                          }
+                        }
+                      ]
                     }
                   },
                   {
@@ -79,7 +88,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -106,7 +115,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -129,7 +138,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -143,7 +152,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       }
     ]
   },

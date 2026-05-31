@@ -1,10 +1,17 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
     [],
     [],
     [],
@@ -33,7 +40,7 @@
                     "symbol": "Forward"
                   },
                   {
-                    "string": "timmy.xlm"
+                    "string": "alice.xlm"
                   }
                 ]
               },
@@ -51,7 +58,7 @@
                             "string": "stellar"
                           },
                           "val": {
-                            "string": "GABC"
+                            "string": "GCCC"
                           }
                         }
                       ]
@@ -70,7 +77,32 @@
                       "symbol": "text_records"
                     },
                     "val": {
-                      "map": []
+                      "map": [
+                        {
+                          "key": {
+                            "string": "com.twitter"
+                          },
+                          "val": {
+                            "string": "@a1"
+                          }
+                        },
+                        {
+                          "key": {
+                            "string": "email"
+                          },
+                          "val": {
+                            "string": "c@c.com"
+                          }
+                        },
+                        {
+                          "key": {
+                            "string": "url"
+                          },
+                          "val": {
+                            "string": "https://b"
+                          }
+                        }
+                      ]
                     }
                   },
                   {
@@ -78,7 +110,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "100"
+                      "u64": "220"
                     }
                   }
                 ]
@@ -102,13 +134,13 @@
                     "symbol": "Reverse"
                   },
                   {
-                    "string": "GABC"
+                    "string": "GCCC"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "string": "timmy.xlm"
+                "string": "alice.xlm"
               }
             }
           },

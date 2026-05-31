@@ -1,10 +1,13 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
+    [],
+    [],
+    [],
     [],
     [],
     [],
@@ -51,7 +54,7 @@
                             "string": "stellar"
                           },
                           "val": {
-                            "string": "GABC"
+                            "string": "GDEF"
                           }
                         }
                       ]
@@ -78,7 +81,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "100"
+                      "u64": "101"
                     }
                   }
                 ]
@@ -102,7 +105,7 @@
                     "symbol": "Reverse"
                   },
                   {
-                    "string": "GABC"
+                    "string": "GDEF"
                   }
                 ]
               },

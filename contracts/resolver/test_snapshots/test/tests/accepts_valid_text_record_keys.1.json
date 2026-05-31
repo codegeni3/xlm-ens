@@ -1,10 +1,12 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
   "auth": [
+    [],
+    [],
     [],
     [],
     [],
@@ -33,7 +35,7 @@
                     "symbol": "Forward"
                   },
                   {
-                    "string": "timmy.xlm"
+                    "string": "alice.xlm"
                   }
                 ]
               },
@@ -70,7 +72,32 @@
                       "symbol": "text_records"
                     },
                     "val": {
-                      "map": []
+                      "map": [
+                        {
+                          "key": {
+                            "string": "com.twitter"
+                          },
+                          "val": {
+                            "string": "@alice"
+                          }
+                        },
+                        {
+                          "key": {
+                            "string": "org.did_key-1"
+                          },
+                          "val": {
+                            "string": "did:x"
+                          }
+                        },
+                        {
+                          "key": {
+                            "string": "url"
+                          },
+                          "val": {
+                            "string": "https://x"
+                          }
+                        }
+                      ]
                     }
                   },
                   {
@@ -78,7 +105,7 @@
                       "symbol": "updated_at"
                     },
                     "val": {
-                      "u64": "100"
+                      "u64": "103"
                     }
                   }
                 ]
@@ -108,7 +135,7 @@
               },
               "durability": "persistent",
               "val": {
-                "string": "timmy.xlm"
+                "string": "alice.xlm"
               }
             }
           },

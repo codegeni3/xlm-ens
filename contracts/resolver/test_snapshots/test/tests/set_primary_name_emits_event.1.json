@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 3,
+    "address": 2,
     "nonce": 0,
     "mux_id": 0
   },
@@ -33,7 +33,7 @@
                     "symbol": "Forward"
                   },
                   {
-                    "string": "timmy.xlm"
+                    "string": "alice.xlm"
                   }
                 ]
               },
@@ -51,7 +51,7 @@
                             "string": "stellar"
                           },
                           "val": {
-                            "string": "GABC"
+                            "string": "GAAA"
                           }
                         }
                       ]
@@ -99,16 +99,43 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Reverse"
+                    "symbol": "Primary"
                   },
                   {
-                    "string": "GABC"
+                    "string": "GAAA"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "string": "timmy.xlm"
+                "string": "alice.xlm"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Reverse"
+                  },
+                  {
+                    "string": "GAAA"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "string": "alice.xlm"
               }
             }
           },
