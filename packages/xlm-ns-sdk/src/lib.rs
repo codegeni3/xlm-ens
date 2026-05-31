@@ -14,6 +14,7 @@ pub mod blocking;
 pub mod client;
 pub mod config;
 pub mod errors;
+mod network;
 #[cfg(test)]
 mod tests;
 pub mod types;
@@ -22,3 +23,5 @@ pub use blocking::XlmNsBlockingClient;
 pub use client::{XlmNsClient, XlmNsClientBuilder};
 pub use config::{ClientConfig, RetryConfig};
 pub use errors::SdkError;
+pub use network::verify_network_passphrase;
+pub use network::verify_transaction_passphrase;

@@ -1,5 +1,6 @@
 use crate::config::ClientConfig;
 use crate::errors::{ContractErrorCode, SdkError};
+use crate::network;
 use crate::types::{
     AddControllerRequest, AuctionCreateRequest, AuctionInfo, AuctionState, AuctionStatus,
     BidRequest, BridgeRoute, BuildMessageRequest, CreateSubdomainRequest, FeeBreakdown, NameRecord,
@@ -87,6 +88,19 @@ impl XlmNsClient {
     pub fn with_config(mut self, config: ClientConfig) -> Self {
         self.config = config;
         self
+    }
+
+    fn configured_network_passphrase(&self) -> Result<&str, SdkError> {
+        self.network_passphrase.as_deref().ok_or_else(|| {
+            SdkError::InvalidRequest("network passphrase not configured".into())
+        })
+    }
+
+    async fn verify_write_network(&self) -> Result<(), SdkError> {
+        let configured = self.configured_network_passphrase()?;
+        let rpc =
+            Client::new(&self.rpc_url).map_err(|e| SdkError::InvalidRequest(e.to_string()))?;
+        network::verify_network_passphrase(configured, &self.rpc_url, &rpc).await
     }
 
     pub async fn resolve(&self, name: &str) -> Result<ResolutionResult, SdkError> {
@@ -288,6 +302,8 @@ impl XlmNsClient {
         &self,
         update: TextRecordUpdate,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if update.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -345,6 +361,8 @@ impl XlmNsClient {
         &self,
         request: RegistrationRequest,
     ) -> Result<RegistrationReceipt, SdkError> {
+        self.verify_write_network().await?;
+
         if request.label.trim().is_empty() {
             return Err(SdkError::InvalidRequest("label must not be empty".into()));
         }
@@ -381,6 +399,8 @@ impl XlmNsClient {
     }
 
     pub async fn renew(&self, request: RenewalRequest) -> Result<RenewalReceipt, SdkError> {
+        self.verify_write_network().await?;
+
         if request.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -418,6 +438,8 @@ impl XlmNsClient {
         &self,
         request: TransferRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if request.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -439,6 +461,8 @@ impl XlmNsClient {
     }
 
     pub async fn register_parent(&self, request: RegisterParentRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
         if request.parent.trim().is_empty() {
             return Err(SdkError::InvalidRequest("parent must not be empty".into()));
         }
@@ -450,6 +474,8 @@ impl XlmNsClient {
     }
 
     pub async fn add_controller(&self, request: AddControllerRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
         if request.parent.trim().is_empty() {
             return Err(SdkError::InvalidRequest("parent must not be empty".into()));
         }
@@ -466,6 +492,8 @@ impl XlmNsClient {
         &self,
         request: CreateSubdomainRequest,
     ) -> Result<String, SdkError> {
+        self.verify_write_network().await?;
+
         if request.label.trim().is_empty() {
             return Err(SdkError::InvalidRequest("label must not be empty".into()));
         }
@@ -483,6 +511,8 @@ impl XlmNsClient {
         &self,
         request: TransferSubdomainRequest,
     ) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
         if request.fqdn.trim().is_empty() {
             return Err(SdkError::InvalidRequest("fqdn must not be empty".into()));
         }
@@ -513,6 +543,8 @@ impl XlmNsClient {
     }
 
     pub async fn register_chain(&self, request: RegisterChainRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
         if request.chain.trim().is_empty() {
             return Err(SdkError::InvalidRequest("chain must not be empty".into()));
         }
@@ -659,6 +691,8 @@ impl XlmNsClient {
         &self,
         request: AuctionCreateRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if request.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -678,6 +712,8 @@ impl XlmNsClient {
         &self,
         request: BidRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if request.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -703,6 +739,8 @@ impl XlmNsClient {
         name: &str,
         signer: Option<String>,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
