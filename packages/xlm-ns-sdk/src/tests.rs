@@ -2,10 +2,14 @@
 mod tests {
     use crate::client::XlmNsClient;
     use crate::errors::SdkError;
+    use crate::network;
     use crate::types::{
         RegistrationRequest, RenewalRequest, SubmissionStatus, TextRecordUpdate,
         TextRecordsUpdate, TransferRequest,
     };
+    use stellar_rpc_client::Client;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
     use std::collections::HashMap;
 
     // Valid 56-char Stellar contract IDs (C-prefix, all alphanumeric).
@@ -228,6 +232,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_verify_passphrase_happy_path() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 21
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+        let http_client = Client::new(&mock_server.uri()).unwrap();
+
+        let result = network::verify_network_passphrase(
+            "Test SDF Network ; September 2015",
+            &mock_server.uri(),
+            &http_client,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_verify_passphrase_mismatch_returns_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "passphrase": "Public Global Stellar Network ; September 2015",
+                    "protocolVersion": 21
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+        let http_client = Client::new(&mock_server.uri()).unwrap();
+
+        let result = network::verify_network_passphrase(
+            "Test SDF Network ; September 2015",
+            &mock_server.uri(),
+            &http_client,
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        match err {
+            SdkError::NetworkPassphraseMismatch {
+                configured,
+                rpc_reported,
+            } => {
+                assert_eq!(configured, "Test SDF Network ; September 2015");
+                assert_eq!(
+                    rpc_reported,
+                    "Public Global Stellar Network ; September 2015"
+                );
+            }
+            _ => panic!("wrong error variant"),
     async fn register_builds_real_submission() {
         // "gamma" = 5 chars → 250_000_000 stroops/year (contract tier: 4–6 chars)
         let receipt = client()
@@ -312,6 +379,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_verify_passphrase_transport_failure() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+        let http_client = Client::new(&mock_server.uri()).unwrap();
+
+        let result = network::verify_network_passphrase(
+            "Test SDF Network ; September 2015",
+            &mock_server.uri(),
+            &http_client,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SdkError::NetworkPassphraseMismatch { .. } => {
+                panic!("should be a transport error, not a mismatch")
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_verify_transaction_passphrase_mismatch() {
+        let result = network::verify_transaction_passphrase(
+            "Test SDF Network ; September 2015",
+            "Public Global Stellar Network ; September 2015",
+        );
+
+        let err = result.unwrap_err();
+        match err {
+            SdkError::TransactionPassphraseMismatch {
+                configured,
+                in_transaction,
+            } => {
+                assert_eq!(configured, "Test SDF Network ; September 2015");
+                assert_eq!(
+                    in_transaction,
+                    "Public Global Stellar Network ; September 2015"
+                );
+            }
+            _ => panic!("wrong error variant"),
+        }
+    }
     async fn renew_builds_real_submission() {
         let receipt = client()
             .renew(RenewalRequest {

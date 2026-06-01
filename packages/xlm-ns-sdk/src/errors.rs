@@ -14,6 +14,18 @@ pub enum SdkError {
     InvalidRequest(String),
     Transport(String),
     ContractError(ContractErrorCode),
+    /// The network passphrase returned by the RPC server does not
+    /// match the passphrase configured in the SDK client.
+    NetworkPassphraseMismatch {
+        configured: String,
+        rpc_reported: String,
+    },
+    /// The network passphrase embedded in a transaction does not
+    /// match the passphrase configured in the SDK client.
+    TransactionPassphraseMismatch {
+        configured: String,
+        in_transaction: String,
+    },
     ContractInvocationFailed {
         operation: &'static str,
         reason: String,
@@ -52,6 +64,20 @@ impl fmt::Display for SdkError {
             Self::InvalidRequest(message) => write!(f, "invalid request: {message}"),
             Self::Transport(message) => write!(f, "transport error: {message}"),
             Self::ContractError(code) => write!(f, "contract error: {code:?}"),
+            Self::NetworkPassphraseMismatch {
+                configured,
+                rpc_reported,
+            } => write!(
+                f,
+                "network passphrase mismatch: configured={configured:?}, rpc_reported={rpc_reported:?}"
+            ),
+            Self::TransactionPassphraseMismatch {
+                configured,
+                in_transaction,
+            } => write!(
+                f,
+                "transaction passphrase mismatch: configured={configured:?}, in_transaction={in_transaction:?}"
+            ),
             Self::ContractInvocationFailed {
                 operation,
                 reason,

@@ -14,6 +14,7 @@ pub mod blocking;
 pub mod client;
 pub mod config;
 pub mod errors;
+mod network;
 #[cfg(test)]
 mod tests;
 pub mod types;

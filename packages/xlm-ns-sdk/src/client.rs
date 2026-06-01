@@ -1,5 +1,6 @@
 use crate::config::{ClientConfig, NetworkPreset};
 use crate::errors::{ContractErrorCode, SdkError};
+use crate::network;
 use crate::types::{
     AddControllerRequest, AuctionCreateRequest, AuctionInfo, AuctionState, AuctionStatus,
     BidRequest, BridgeRoute, BuildMessageRequest, CreateSubdomainRequest, FeeBreakdown, NameRecord,
@@ -131,6 +132,17 @@ impl XlmNsClient {
         self
     }
 
+    fn configured_network_passphrase(&self) -> Result<&str, SdkError> {
+        self.network_passphrase.as_deref().ok_or_else(|| {
+            SdkError::InvalidRequest("network passphrase not configured".into())
+        })
+    }
+
+    async fn verify_write_network(&self) -> Result<(), SdkError> {
+        let configured = self.configured_network_passphrase()?;
+        let rpc =
+            Client::new(&self.rpc_url).map_err(|e| SdkError::InvalidRequest(e.to_string()))?;
+        network::verify_network_passphrase(configured, &self.rpc_url, &rpc).await
     fn require_contract_id<'a>(
         contract_id: &'a Option<String>,
         field_name: &'static str,
@@ -400,6 +412,8 @@ impl XlmNsClient {
         &self,
         update: TextRecordUpdate,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if update.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -492,6 +506,14 @@ impl XlmNsClient {
         &self,
         request: RegistrationRequest,
     ) -> Result<RegistrationReceipt, SdkError> {
+        self.verify_write_network().await?;
+
+        if request.label.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("label must not be empty".into()));
+        }
+        if request.owner.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("owner must not be empty".into()));
+        }
         Self::require_label(&request.label, "label")?;
         Self::require_label(&request.owner, "owner")?;
         if request.duration_years == 0 {
@@ -536,6 +558,11 @@ impl XlmNsClient {
     }
 
     pub async fn renew(&self, request: RenewalRequest) -> Result<RenewalReceipt, SdkError> {
+        self.verify_write_network().await?;
+
+        if request.name.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("name must not be empty".into()));
+        }
         Self::require_label(&request.name, "name")?;
         if request.additional_years == 0 {
             return Err(SdkError::InvalidRequest(
@@ -583,6 +610,8 @@ impl XlmNsClient {
         &self,
         request: TransferRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
         if request.name.trim().is_empty() {
             return Err(SdkError::InvalidRequest("name must not be empty".into()));
         }
@@ -605,6 +634,9 @@ impl XlmNsClient {
         self.maybe_hydrate_submission(submission, "transfer").await
     }
 
+    pub async fn register_parent(&self, request: RegisterParentRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
     pub async fn register_parent(
         &self,
         request: RegisterParentRequest,
@@ -625,6 +657,9 @@ impl XlmNsClient {
             .await?;
         self.maybe_hydrate_submission(submission, "register_parent").await
     }
+
+    pub async fn add_controller(&self, request: AddControllerRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
 
     pub async fn add_controller(
         &self,
@@ -650,6 +685,9 @@ impl XlmNsClient {
     pub async fn create_subdomain(
         &self,
         request: CreateSubdomainRequest,
+    ) -> Result<String, SdkError> {
+        self.verify_write_network().await?;
+
         dry_run: bool,
     ) -> Result<TransactionSubmission, SdkError> {
         if request.label.trim().is_empty() {
@@ -674,6 +712,9 @@ impl XlmNsClient {
     pub async fn transfer_subdomain(
         &self,
         request: TransferSubdomainRequest,
+    ) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
         dry_run: bool,
     ) -> Result<TransactionSubmission, SdkError> {
         if request.fqdn.trim().is_empty() {
@@ -707,6 +748,10 @@ impl XlmNsClient {
     }
 
     pub async fn register_chain(&self, request: RegisterChainRequest) -> Result<(), SdkError> {
+        self.verify_write_network().await?;
+
+        if request.chain.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("chain must not be empty".into()));
         Self::require_label(&request.chain, "chain")?;
         let _ = self.rpc_context().await?;
         if self.bridge_contract_id.is_none() {
@@ -942,6 +987,10 @@ impl XlmNsClient {
         &self,
         request: AuctionCreateRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
+        if request.name.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("name must not be empty".into()));
         Self::require_label(&request.name, "name")?;
         if request.reserve_price == 0 {
             return Err(SdkError::InvalidRequest(
@@ -972,6 +1021,11 @@ impl XlmNsClient {
         &self,
         request: BidRequest,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
+        if request.name.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("name must not be empty".into()));
+        }
         Self::require_label(&request.name, "name")?;
         if request.amount == 0 {
             return Err(SdkError::InvalidRequest(
@@ -1039,6 +1093,19 @@ impl XlmNsClient {
         name: &str,
         signer: Option<String>,
     ) -> Result<TransactionSubmission, SdkError> {
+        self.verify_write_network().await?;
+
+        if name.trim().is_empty() {
+            return Err(SdkError::InvalidRequest("name must not be empty".into()));
+        }
+
+        Ok(TransactionSubmission {
+            tx_hash: "tx_settle_mock".to_string(),
+            status: SubmissionStatus::Submitted,
+            ledger: None,
+            submitted_at: MOCK_REFERENCE_TIMESTAMP,
+            contract_id: self.auction_contract_id.clone(),
+            network_passphrase: self.network_passphrase.clone(),
         Self::require_label(name, "name")?;
         let (_, ledger, network_passphrase) = self.rpc_context().await?;
         Ok(self.make_submission(
