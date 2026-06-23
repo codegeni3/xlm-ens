@@ -19,6 +19,7 @@ pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
 pub const CONTRACT_VERSION: u32 = 1;
 
 #[contractevent]
+#[contracttype]
 pub struct ContractUpgraded {
     pub old_version: u32,
     pub new_version: u32,
@@ -177,7 +178,7 @@ impl RegistrarContract {
 
     pub fn upgrade(
         env: Env,
-        new_wasm_hash: Bytes,
+        new_wasm_hash: BytesN<32>,
         migration_data: Bytes,
     ) -> Result<(), RegistrarError> {
         let admin: Address = env
@@ -207,7 +208,7 @@ impl RegistrarContract {
             },
         );
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.deployer().update_current_contract_wasm(new_wasm_hash.to_bytes());
 
         Ok(())
     }
