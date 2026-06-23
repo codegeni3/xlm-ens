@@ -72,10 +72,13 @@ jobs:
             fi
             echo "OK: $wasm ($(wc -c < "$wasm") bytes)"
           done
+      - name: Check contract WASM size budget
+        run: ./scripts/check-contract-size.sh
       - name: Collect artifacts
         run: |
           mkdir -p artifacts/wasm artifacts/specs
           cp target/wasm32-unknown-unknown/release/xlm_ns_*.wasm artifacts/wasm/
+            cp artifacts/contract-size-report.md artifacts/ 2>/dev/null || true
 
           # Generate contract specs for each WASM
           for wasm in artifacts/wasm/*.wasm; do
