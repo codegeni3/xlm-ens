@@ -4,6 +4,7 @@ mod export;
 mod output;
 mod signer;
 
+
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
@@ -69,7 +70,83 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum MigrateCommands {
+    /// Transform a JSON state file from one schema version to another.
+    ///
+    /// NOTE: storage rewriting is placeholder in this environment; only
+    /// schema_version + file metadata may be updated.
+    Transform {
+        #[arg(long)]
+        from_version: u32,
+        #[arg(long)]
+        to_version: u32,
+        /// Input JSON file (exported contract state)
+        #[arg(long)]
+        in_file: PathBuf,
+        /// Output JSON file
+        #[arg(long)]
+        out_file: PathBuf,
+    },
+
+    /// Verify two JSON state files entry-by-entry.
+    Verify {
+        /// Source JSON state file
+        #[arg(long)]
+        source_file: PathBuf,
+        /// Target JSON state file
+        #[arg(long)]
+        target_file: PathBuf,
+        /// When strict, exits non-zero on any mismatch.
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+    },
+
+    /// Dry-run the transform without writing output.
+    DryRun {
+        #[arg(long)]
+        from_version: u32,
+        #[arg(long)]
+        to_version: u32,
+        #[arg(long)]
+        in_file: PathBuf,
+    },
+
+    /// Generate rollback metadata for an upcoming upgrade.
+    ///
+    /// NOTE: WASM-hash extraction is stubbed in this environment.
+    RollbackMetadata {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        wasm_hash_out: PathBuf,
+    },
+
+    /// Storage export (stub)
+    Export {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        out_file: PathBuf,
+    },
+
+    /// Storage import (stub)
+    Import {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        in_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
+
+    /// Migrate Soroban contract storage safely (transform/verify; export/import stubbed)
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommands,
+    },
+
     /// Register a new name.
     Register {
         /// Name to register
@@ -334,6 +411,7 @@ enum ConfigCommands {
 
 #[derive(Subcommand)]
 enum TextCommand {
+
     /// Read a text record value for a name.
     Get { name: String, key: String },
     /// Write a text record value on a name.
@@ -368,6 +446,7 @@ async fn run() -> anyhow::Result<()> {
         .with_context(|| format!("invalid network '{}'", cli.network))?;
 
     let contract_overrides = ContractOverrides {
+
         registry_contract_id: cli.registry_contract_id.clone(),
         registrar_contract_id: cli.registrar_contract_id.clone(),
         resolver_contract_id: cli.resolver_contract_id.clone(),
@@ -393,7 +472,63 @@ async fn run() -> anyhow::Result<()> {
     }
 
     match cli.command {
+        Commands::Migrate { command } => match command {
+            MigrateCommands::Transform {
+                from_version,
+                to_version,
+                in_file,
+                out_file,
+            } => commands::migrate::run_transform(
+                cli.output,
+                config.clone(),
+                from_version,
+                to_version,
+                in_file,
+                out_file,
+                cli.dry_run,
+            )
+            .await,
+            MigrateCommands::DryRun {
+                from_version,
+                to_version,
+                in_file,
+            } => commands::migrate::run_transform(
+                cli.output,
+                config.clone(),
+                from_version,
+                to_version,
+                in_file,
+                // out_file is unused in dry_run; still required by signature.
+                PathBuf::from("/dev/null"),
+                true,
+            )
+            .await,
+            MigrateCommands::Verify {
+                source_file,
+                target_file,
+                strict,
+            } => commands::migrate::run_verify(
+                cli.output,
+                config.clone(),
+                source_file,
+                target_file,
+                strict,
+            )
+            .await,
+            MigrateCommands::RollbackMetadata {
+                contract_id,
+                wasm_hash_out,
+            } => commands::migrate::run_rollback_metadata(
+                cli.output,
+                contract_id,
+                wasm_hash_out,
+            )
+            .await,
+            MigrateCommands::Export { .. } => commands::migrate::run_export_stub().await,
+            MigrateCommands::Import { .. } => commands::migrate::run_import_stub().await,
+        },
         Commands::Register {
+
             name,
             owner,
             signer,
@@ -884,7 +1019,10 @@ fn validate_contract_policy(
         Commands::Availability { .. } => ("availability", &[ContractKind::Registry], &[]),
         // Healthcheck is purely informational: all contract flags are allowed
         // (they are reflected in the output) and none are required.
+        Commands::Migrate { .. } => ("migrate", &[], &[]),
         Commands::Healthcheck => (
+
+
             "healthcheck",
             &[
                 ContractKind::Registry,

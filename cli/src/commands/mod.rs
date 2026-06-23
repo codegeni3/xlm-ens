@@ -14,3 +14,5 @@ pub mod subdomain;
 pub mod text;
 pub mod transfer;
 pub mod whois;
+pub mod migrate;
+
