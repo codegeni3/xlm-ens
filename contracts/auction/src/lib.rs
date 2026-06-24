@@ -1,8 +1,8 @@
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token,
-    Address, Bytes, BytesN, Env, String, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Bytes,
+    BytesN, Env, String, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::time::is_time_window_open;
@@ -209,9 +209,7 @@ impl AuctionContract {
     }
 
     pub fn cancellation(env: Env, name: String) -> Option<Cancellation> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Cancelled(name))
+        env.storage().persistent().get(&DataKey::Cancelled(name))
     }
 
     pub fn create_auction(
