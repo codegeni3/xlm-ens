@@ -2,7 +2,7 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, Env, IntoVal, Map, String, Symbol, Vec,
+    Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::RegistryEntry;
@@ -96,7 +96,6 @@ pub enum ResolverError {
 
 /// Emitted when a forward record (name → address) is created or updated.
 #[contractevent]
-#[contracttype]
 pub struct ForwardUpdated {
     pub name: String,
     pub address: String,
@@ -106,7 +105,6 @@ pub struct ForwardUpdated {
 
 /// Emitted when a reverse mapping (address → name) is written.
 #[contractevent]
-#[contracttype]
 pub struct ReverseUpdated {
     pub address: String,
     pub name: String,
@@ -114,7 +112,6 @@ pub struct ReverseUpdated {
 
 /// Emitted when a primary name is set for an address.
 #[contractevent]
-#[contracttype]
 pub struct PrimaryNameSet {
     pub address: String,
     pub name: String,
@@ -122,7 +119,6 @@ pub struct PrimaryNameSet {
 
 /// Emitted when a text record is created or updated.
 #[contractevent]
-#[contracttype]
 pub struct TextRecordUpdated {
     pub name: String,
     pub key: String,
@@ -132,7 +128,6 @@ pub struct TextRecordUpdated {
 
 /// Emitted when a record (and its reverse/primary) is removed.
 #[contractevent]
-#[contracttype]
 pub struct RecordRemoved {
     pub name: String,
     pub former_address: Option<String>,
@@ -140,7 +135,6 @@ pub struct RecordRemoved {
 
 /// Emitted when the contract is upgraded.
 #[contractevent]
-#[contracttype]
 pub struct ContractUpgraded {
     pub old_version: u32,
     pub new_version: u32,
@@ -201,16 +195,14 @@ impl ResolverContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
-        env.events().publish(
-            (symbol_short!("resolver"), symbol_short!("upgraded")),
-            ContractUpgraded {
-                old_version: current_version,
-                new_version: target_version,
-                admin,
-            },
-        );
+        ContractUpgraded {
+            old_version: current_version,
+            new_version: target_version,
+            admin,
+        }
+        .publish(&env);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.to_bytes());
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
 
         Ok(())
     }
