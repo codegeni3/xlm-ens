@@ -1,9 +1,9 @@
-use alloc::string::{String, ToString};
 use crate::constants::{
     MAX_NAME_LENGTH, MAX_REGISTRATION_YEARS, MIN_NAME_LENGTH, MIN_REGISTRATION_YEARS,
 };
 use crate::errors::CommonError;
 use crate::types::Tld;
+use alloc::string::{String, ToString};
 
 pub fn validate_label(label: &str) -> Result<(), CommonError> {
     let len = label.len();
@@ -103,6 +103,11 @@ pub fn validate_account_address(address: &str) -> Result<(), CommonError> {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
+    use alloc::format;
+    use alloc::string::ToString;
+
     use super::{
         parse_fqdn, validate_account_address, validate_chain_name, validate_contract_id,
         validate_label, validate_registration_years,
