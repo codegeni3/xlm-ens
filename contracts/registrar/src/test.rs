@@ -868,10 +868,7 @@ mod tests {
 
         let label = String::from_str(&env, "custom");
         let quote = client.quote_registration(&label, &1, &1000);
-        assert_eq!(
-            quote.grace_period_ends_at,
-            quote.expiry_unix + custom_grace
-        );
+        assert_eq!(quote.grace_period_ends_at, quote.expiry_unix + custom_grace);
     }
 
     #[test]
@@ -958,13 +955,8 @@ mod tests {
         client.register(&label, &owner, &1, &quote.fee_stroops, &100);
 
         let after_grace = quote.grace_period_ends_at + 1;
-        let result = client.try_extend_during_grace(
-            &name,
-            &owner,
-            &1,
-            &quote.fee_stroops,
-            &after_grace,
-        );
+        let result =
+            client.try_extend_during_grace(&name, &owner, &1, &quote.fee_stroops, &after_grace);
         assert!(matches!(
             result,
             Err(Ok(RegistrarError::RegistrationClaimable))

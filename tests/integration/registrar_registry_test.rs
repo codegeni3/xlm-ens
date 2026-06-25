@@ -285,22 +285,16 @@ mod registrar_registry_integration {
             NameState::GracePeriod
         );
 
-        let resolve_result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                registry.resolve(&name, &in_grace);
-            }));
+        let resolve_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            registry.resolve(&name, &in_grace);
+        }));
         assert!(
             resolve_result.is_err(),
             "registry resolve must fail during grace period"
         );
 
-        let register_result = registrar.try_register(
-            &label,
-            &intruder,
-            &1,
-            &quote.fee_stroops,
-            &in_grace,
-        );
+        let register_result =
+            registrar.try_register(&label, &intruder, &1, &quote.fee_stroops, &in_grace);
         assert!(
             register_result.is_err(),
             "new registration must be blocked during grace period"

@@ -167,10 +167,9 @@ impl RegistrarContract {
         }
 
         if !env.storage().persistent().has(&DataKey::GracePeriodSeconds) {
-            env.storage().persistent().set(
-                &DataKey::GracePeriodSeconds,
-                &DEFAULT_GRACE_PERIOD_SECONDS,
-            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::GracePeriodSeconds, &DEFAULT_GRACE_PERIOD_SECONDS);
         }
         Ok(())
     }
@@ -683,10 +682,7 @@ impl RegistrarContract {
     ///
     /// Affects grace calculations for new registrations and renewals. Existing
     /// registrations keep their stored `grace_period_ends_at` timestamps.
-    pub fn set_grace_period(
-        env: Env,
-        grace_period_seconds: u64,
-    ) -> Result<(), RegistrarError> {
+    pub fn set_grace_period(env: Env, grace_period_seconds: u64) -> Result<(), RegistrarError> {
         let admin: Address = env
             .storage()
             .instance()
@@ -700,10 +696,9 @@ impl RegistrarContract {
             return Err(RegistrarError::Validation);
         }
 
-        env.storage().persistent().set(
-            &DataKey::GracePeriodSeconds,
-            &grace_period_seconds,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::GracePeriodSeconds, &grace_period_seconds);
 
         env.events().publish(
             (symbol_short!("registrar"), symbol_short!("grace")),
