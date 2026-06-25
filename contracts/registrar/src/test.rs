@@ -9,7 +9,7 @@ mod tests {
     use crate::pricing::price_for_label_length;
     use crate::{
         can_renew, RegistrarContract, RegistrarContractClient, RegistrarError, RegistrationStatus,
-        GRACE_PERIOD_SECONDS,
+        DEFAULT_GRACE_PERIOD_SECONDS, GRACE_PERIOD_SECONDS,
     };
     use xlm_ns_registry::RegistryContract;
 
@@ -24,7 +24,8 @@ mod tests {
     fn computes_expiry_and_grace_period() {
         let expiry = expiry_from_now(100, 1);
         assert!(within_grace_period(expiry, expiry + 10));
-        assert!(can_renew(expiry, expiry + 10).unwrap());
+        let grace_end = expiry + GRACE_PERIOD_SECONDS;
+        assert!(can_renew(grace_end, expiry + 10).unwrap());
     }
 
     #[test]
@@ -58,7 +59,8 @@ mod tests {
     fn can_renew_active_registration_before_expiry() {
         let now = 1000;
         let expiry = 2000;
-        let result = can_renew(expiry, now);
+        let grace_end = expiry + GRACE_PERIOD_SECONDS;
+        let result = can_renew(grace_end, now);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -67,7 +69,8 @@ mod tests {
     fn can_renew_at_exact_expiry() {
         let now = 2000;
         let expiry = 2000;
-        let result = can_renew(expiry, now);
+        let grace_end = expiry + GRACE_PERIOD_SECONDS;
+        let result = can_renew(grace_end, now);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -75,9 +78,9 @@ mod tests {
     #[test]
     fn can_renew_during_grace_period() {
         let expiry = 1000;
-        let _grace_end = expiry + GRACE_PERIOD_SECONDS;
+        let grace_end = expiry + GRACE_PERIOD_SECONDS;
         let now = expiry + 100;
-        let result = can_renew(expiry, now);
+        let result = can_renew(grace_end, now);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -87,7 +90,7 @@ mod tests {
         let expiry = 1000;
         let grace_end = expiry + GRACE_PERIOD_SECONDS;
         let now = grace_end - 1;
-        let result = can_renew(expiry, now);
+        let result = can_renew(grace_end, now);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -97,7 +100,7 @@ mod tests {
         let expiry = 1000;
         let grace_end = expiry + GRACE_PERIOD_SECONDS;
         let now = grace_end;
-        let result = can_renew(expiry, now);
+        let result = can_renew(grace_end, now);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -107,7 +110,7 @@ mod tests {
         let expiry = 1000;
         let grace_end = expiry + GRACE_PERIOD_SECONDS;
         let now = grace_end + 1;
-        let result = can_renew(expiry, now);
+        let result = can_renew(grace_end, now);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), RegistrarError::RegistrationClaimable);
     }
@@ -117,7 +120,7 @@ mod tests {
         let expiry = 1000;
         let grace_end = expiry + GRACE_PERIOD_SECONDS;
         let now = grace_end + 1000000;
-        let result = can_renew(expiry, now);
+        let result = can_renew(grace_end, now);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), RegistrarError::RegistrationClaimable);
     }
@@ -832,6 +835,187 @@ mod tests {
         assert!(
             matches!(result, Err(Ok(RegistrarError::RateLimitExceeded))),
             "Should fail with RateLimitExceeded"
+        );
+    }
+
+    // ==================== Grace Period Configuration Tests ====================
+
+    #[test]
+    fn grace_period_defaults_to_30_days() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        assert_eq!(client.get_grace_period(), DEFAULT_GRACE_PERIOD_SECONDS);
+        assert_eq!(client.get_grace_period(), GRACE_PERIOD_SECONDS);
+    }
+
+    #[test]
+    fn set_grace_period_updates_quotes() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        let admin = Address::generate(&env);
+        client.initialize(&registry_id, &admin);
+
+        let custom_grace = 86_400 * 14; // 14 days
+        client.set_grace_period(&custom_grace);
+
+        let label = String::from_str(&env, "custom");
+        let quote = client.quote_registration(&label, &1, &1000);
+        assert_eq!(
+            quote.grace_period_ends_at,
+            quote.expiry_unix + custom_grace
+        );
+    }
+
+    #[test]
+    fn set_grace_period_rejects_out_of_range_values() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        assert!(matches!(
+            client.try_set_grace_period(&0),
+            Err(Ok(RegistrarError::Validation))
+        ));
+    }
+
+    // ==================== Grace Period Lifecycle Tests ====================
+
+    #[test]
+    fn extend_during_grace_renews_expired_name() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "gracerenew");
+        let name = String::from_str(&env, "gracerenew.xlm");
+        let quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &quote.fee_stroops, &100);
+
+        let in_grace = quote.expiry_unix + 1;
+        client.extend_during_grace(&name, &owner, &1, &quote.fee_stroops, &in_grace);
+
+        let record = client.registration(&name).unwrap();
+        assert!(record.expires_at > in_grace);
+        assert_eq!(
+            client.registration_status(&label, &in_grace),
+            RegistrationStatus::Active
+        );
+    }
+
+    #[test]
+    fn extend_during_grace_rejects_active_name() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "stillactive");
+        let name = String::from_str(&env, "stillactive.xlm");
+        let quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &quote.fee_stroops, &100);
+
+        let result = client.try_extend_during_grace(
+            &name,
+            &owner,
+            &1,
+            &quote.fee_stroops,
+            &quote.expiry_unix,
+        );
+        assert!(matches!(result, Err(Ok(RegistrarError::NotRenewable))));
+    }
+
+    #[test]
+    fn extend_during_grace_rejects_claimable_name() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "toolate");
+        let name = String::from_str(&env, "toolate.xlm");
+        let quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &quote.fee_stroops, &100);
+
+        let after_grace = quote.grace_period_ends_at + 1;
+        let result = client.try_extend_during_grace(
+            &name,
+            &owner,
+            &1,
+            &quote.fee_stroops,
+            &after_grace,
+        );
+        assert!(matches!(
+            result,
+            Err(Ok(RegistrarError::RegistrationClaimable))
+        ));
+    }
+
+    #[test]
+    fn register_rejected_during_grace_period() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        let owner = Address::generate(&env);
+        let intruder = Address::generate(&env);
+        let label = String::from_str(&env, "taken");
+        let quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &quote.fee_stroops, &100);
+
+        let in_grace = quote.expiry_unix + 1;
+        assert!(!client.is_available(&label, &in_grace));
+        assert_eq!(
+            client.registration_status(&label, &in_grace),
+            RegistrationStatus::GracePeriod
+        );
+
+        let result = client.try_register(&label, &intruder, &1, &quote.fee_stroops, &in_grace);
+        assert!(matches!(result, Err(Ok(RegistrarError::AlreadyRegistered))));
+    }
+
+    #[test]
+    fn name_available_after_grace_period() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RegistrarContract, ());
+        let client = RegistrarContractClient::new(&env, &contract_id);
+        let registry_id = env.register(RegistryContract, ());
+        client.initialize(&registry_id, &Address::generate(&env));
+
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "released");
+        let quote = client.quote_registration(&label, &1, &100);
+        client.register(&label, &owner, &1, &quote.fee_stroops, &100);
+
+        let after_grace = quote.grace_period_ends_at + 1;
+        assert!(client.is_available(&label, &after_grace));
+        assert_eq!(
+            client.registration_status(&label, &after_grace),
+            RegistrationStatus::Claimable
         );
     }
 }
