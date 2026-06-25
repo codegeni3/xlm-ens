@@ -1,8 +1,5 @@
 #[cfg(test)]
 mod fault_injection_tests {
-    use xlm_ns_sdk::network;
-    use xlm_ns_sdk::errors::SdkError;
-    use xlm_ns_sdk::config::ClientConfig;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -10,41 +7,46 @@ mod fault_injection_tests {
     use stellar_rpc_client::Client;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+    use xlm_ns_sdk::config::ClientConfig;
+    use xlm_ns_sdk::errors::SdkError;
+    use xlm_ns_sdk::network;
 
     #[tokio::test]
     async fn test_timeout_scenario() {
         // Create a mock server that delays response longer than typical timeout
         let mock_server = MockServer::start().await;
-        
+
         // Set up a delay longer than what we'll set as timeout in our client
         let delay_responder = DelayResponder::new(
             3500, // 3.5 seconds delay
             ResponseTemplate::new(200).set_body_json(jsonrpc_success_response()),
         );
-        
+
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(delay_responder)
             .mount(&mock_server)
             .await;
-        
+
         // Create HTTP client pointing to the mock server
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a timeout error
         assert!(result.is_err());
         match result.unwrap_err() {
             SdkError::Transport(msg) => {
-                assert!(msg.contains("timeout") || msg.contains("timed out") || 
-                       msg.contains("failed to get network"));
+                assert!(
+                    msg.contains("timeout")
+                        || msg.contains("timed out")
+                        || msg.contains("failed to get network")
+                );
             }
             other => panic!("Expected transport error (timeout), got {other:?}"),
         }
@@ -53,33 +55,36 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_malformed_json_response() {
         let mock_server = MockServer::start().await;
-        
+
         // Return invalid JSON that cannot be parsed
         let malformed_responder = MalformedJsonResponder::new("{\"invalid json\"}");
-        
+
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(malformed_responder)
             .mount(&mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a deserialization/invalid request error
         assert!(result.is_err());
         match result.unwrap_err() {
             SdkError::InvalidRequest(msg) | SdkError::Transport(msg) => {
                 // Should contain JSON parsing error indication
-                assert!(msg.contains("JSON") || msg.contains("invalid") || msg.contains("parse") ||
-                       msg.contains("failed to get network"));
+                assert!(
+                    msg.contains("JSON")
+                        || msg.contains("invalid")
+                        || msg.contains("parse")
+                        || msg.contains("failed to get network")
+                );
             }
             other => panic!("Expected JSON parse error, got {other:?}"),
         }
@@ -88,32 +93,37 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_partial_response() {
         let mut mock_server = MockServer::start().await;
-        
+
         // Return truncated JSON response (missing closing braces)
-        let partial_responder = PartialJsonResponder::new("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"passphrase\":\"Test\"}");
-        
+        let partial_responder = PartialJsonResponder::new(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"passphrase\":\"Test\"}",
+        );
+
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(partial_responder)
             .mount(&mut mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a deserialization error
         assert!(result.is_err());
         match result.unwrap_err() {
             SdkError::InvalidRequest(msg) | SdkError::Transport(msg) => {
-                assert!(msg.contains("JSON") || msg.contains("invalid") || msg.contains("parse") ||
-                       msg.contains("failed to get network"));
+                assert!(
+                    msg.contains("JSON")
+                        || msg.contains("invalid")
+                        || msg.contains("parse")
+                        || msg.contains("failed to get network")
+                );
             }
             other => panic!("Expected JSON parse error, got {other:?}"),
         }
@@ -122,7 +132,7 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_connection_reset_simulation() {
         let mut mock_server = MockServer::start().await;
-        
+
         // Simulate connection reset by sending partial response
         let valid_response = jsonrpc_success_response().to_string();
         let connection_reset_responder = ConnectionResetResponder::new(
@@ -131,29 +141,29 @@ mod fault_injection_tests {
                 let response_bytes = valid_response.clone().into_bytes();
                 let length = valid_response.len();
                 (response_bytes, length / 2)
-            }.0,
+            }
+            .0,
             {
                 let length = valid_response.len();
                 length / 2
-            }
+            },
         );
-        
+
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(connection_reset_responder)
             .mount(&mut mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return an error due to incomplete/invalid response
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -168,24 +178,23 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_http_500_error() {
         let mut mock_server = MockServer::start().await;
-        
+
         // Return HTTP 500 Internal Server Error
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&mut mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a transport error
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -201,24 +210,23 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_http_503_service_unavailable() {
         let mut mock_server = MockServer::start().await;
-        
+
         // Return HTTP 503 Service Unavailable (should be retryable)
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(ResponseTemplate::new(503))
             .mount(&mut mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a transport error (503 is treated as transient but still an error at this level)
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -234,27 +242,26 @@ mod fault_injection_tests {
     #[tokio::test]
     async fn test_rate_limit_429_error() {
         let mut mock_server = MockServer::start().await;
-        
+
         // Return HTTP 429 Too Many Requests
         let mut response = ResponseTemplate::new(429);
         response = response.insert_header("Retry-After", "1");
-        
+
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(response)
             .mount(&mut mock_server)
             .await;
-        
-        let http_client = Client::new(&mock_server.uri())
-            .expect("Failed to create HTTP client");
-        
+
+        let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
+
         let result = network::verify_network_passphrase(
             "Test SDF Network ; September 2015",
             &mock_server.uri(),
             &http_client,
         )
         .await;
-        
+
         // Should return a transport error
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -295,7 +302,10 @@ mod fault_injection_tests {
 
     impl ConnectionResetResponder {
         fn new(response_bytes: Vec<u8>, close_at_byte: usize) -> Self {
-            Self { response_bytes, close_at_byte }
+            Self {
+                response_bytes,
+                close_at_byte,
+            }
         }
     }
 
@@ -323,7 +333,8 @@ mod fault_injection_tests {
 
     impl Respond for MalformedJsonResponder {
         fn respond(&self, _request: &Request) -> ResponseTemplate {
-            ResponseTemplate::new(200).set_body_raw(self.invalid_json.as_bytes(), "application/json")
+            ResponseTemplate::new(200)
+                .set_body_raw(self.invalid_json.as_bytes(), "application/json")
         }
     }
 
@@ -340,7 +351,8 @@ mod fault_injection_tests {
 
     impl Respond for PartialJsonResponder {
         fn respond(&self, _request: &Request) -> ResponseTemplate {
-            ResponseTemplate::new(200).set_body_raw(self.partial_json.as_bytes(), "application/json")
+            ResponseTemplate::new(200)
+                .set_body_raw(self.partial_json.as_bytes(), "application/json")
         }
     }
 
