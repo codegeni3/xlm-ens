@@ -209,6 +209,8 @@ impl ResolverContract {
         }
         .publish(&env);
 
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.to_bytes());
         env.deployer().update_current_contract_wasm(new_wasm_hash);
 
         Ok(())

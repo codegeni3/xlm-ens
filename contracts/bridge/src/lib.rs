@@ -3,6 +3,8 @@ mod axelar;
 mod test;
 
 use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    Bytes, BytesN, Env, String,
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
     Env, String,
 };
@@ -92,6 +94,10 @@ impl BridgeContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
+        env.events().publish(
+            (symbol_short!("bridge"), symbol_short!("upgraded")),
+            (current_version, target_version, admin),
+        );
         ContractUpgraded {
             old_version: current_version,
             new_version: target_version,

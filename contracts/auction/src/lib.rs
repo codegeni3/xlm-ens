@@ -2,6 +2,8 @@
 mod test;
 
 use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, Bytes, BytesN, Env, String, Vec,
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Bytes,
     BytesN, Env, String, Vec,
 };
@@ -146,6 +148,10 @@ impl AuctionContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
+        env.events().publish(
+            (symbol_short!("auction"), symbol_short!("upgraded")),
+            (current_version, target_version, admin),
+        );
         ContractUpgraded {
             old_version: current_version,
             new_version: target_version,
