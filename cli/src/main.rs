@@ -166,6 +166,9 @@ enum Commands {
         #[arg(default_value_t = 1)]
         years: u32,
     },
+    /// Perform bulk operations from a file.
+    #[command(subcommand)]
+    Bulk(BulkCommands),
     /// Check whether a name is available for registration (read-only).
     ///
     /// Outputs the availability status: available, active, grace-period, or claimable.
@@ -179,6 +182,22 @@ enum Commands {
     /// Exits with a non-zero status when any check fails so the command can be
     /// used in health-probe scripts and CI pipelines.
     Healthcheck,
+}
+
+#[derive(Subcommand)]
+pub enum BulkCommands {
+    /// Bulk register names from a file.
+    Register {
+        /// Path to the file containing the names to register.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Bulk renew names from a file.
+    Renew {
+        /// Path to the file containing the names to renew.
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -534,6 +553,14 @@ async fn run() -> anyhow::Result<()> {
             commands::quote::run_availability(config, cli.output, &name).await
         }
         Commands::Healthcheck => commands::healthcheck::run_healthcheck(config, cli.output).await,
+        Commands::Bulk(sub) => match sub {
+            BulkCommands::Register { file } => {
+                commands::bulk::run_bulk_register(config, &file, cli.dry_run).await
+            }
+            BulkCommands::Renew { file } => {
+                commands::bulk::run_bulk_renew(config, &file, cli.dry_run).await
+            }
+        },
         Commands::Completions { .. } => unreachable!("handled above"),
     }
 }
@@ -916,6 +943,18 @@ fn validate_contract_policy(
             ],
             &[],
         ),
+        Commands::Bulk(sub) => match sub {
+            BulkCommands::Register { .. } => (
+                "bulk register",
+                &[ContractKind::Registrar],
+                &[ContractKind::Registrar],
+            ),
+            BulkCommands::Renew { .. } => (
+                "bulk renew",
+                &[ContractKind::Registrar],
+                &[ContractKind::Registrar],
+            ),
+        },
     };
 
     for kind in overrides.provided_kinds() {

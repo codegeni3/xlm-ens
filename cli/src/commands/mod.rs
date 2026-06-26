@@ -1,5 +1,6 @@
 pub mod auction;
 pub mod bridge;
+pub mod bulk;
 pub mod completions;
 pub mod config;
 pub mod healthcheck;
