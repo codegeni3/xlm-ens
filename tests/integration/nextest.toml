@@ -1,0 +1,21 @@
+# See https://nexte.st/book/configuration.html for a full list of options.
+
+[profile.default]
+# Retry flaky tests up to 2 times.
+retries = 2
+# Default timeout for each test.
+test-timeout = "30s"
+
+# A specific profile for CI runs.
+[profile.ci]
+# Inherit settings from the default profile.
+from-profile = "default"
+# Store test results in a machine-readable JUnit XML file for CI reporting.
+report-junit = { path = "target/nextest/ci/junit.xml" }
+
+# Override settings for integration tests, which can be slower.
+[profile.default.overrides]
+# Integration tests are identified by the 'integration' kind.
+filter = 'kind(integration)'
+# Give integration tests a longer timeout.
+test-timeout = "120s"
