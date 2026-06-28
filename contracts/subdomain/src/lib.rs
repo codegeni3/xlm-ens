@@ -137,6 +137,7 @@ impl SubdomainContract {
     /// exactly once. Subsequent attempts to register the same parent domain
     /// will be rejected to prevent unauthorized takeover of the parent namespace.
     pub fn register_parent(env: Env, parent: String, owner: Address) -> Result<(), SubdomainError> {
+        owner.require_auth();
         validate_fqdn_soroban(&parent).map_err(|_| SubdomainError::Validation)?;
         validate_base_name_soroban(&parent).map_err(|_| SubdomainError::Validation)?;
         let key = DataKey::Parent(parent.clone());
@@ -183,6 +184,7 @@ impl SubdomainContract {
         caller: Address,
         controller: Address,
     ) -> Result<(), SubdomainError> {
+        caller.require_auth();
         let mut parent_record = get_parent(&env, &parent)?;
         if parent_record.owner != caller {
             return Err(SubdomainError::Unauthorized);
@@ -206,6 +208,7 @@ impl SubdomainContract {
         caller: Address,
         controller: Address,
     ) -> Result<(), SubdomainError> {
+        caller.require_auth();
         let mut parent_record = get_parent(&env, &parent)?;
         if parent_record.owner != caller {
             return Err(SubdomainError::Unauthorized);
@@ -233,6 +236,7 @@ impl SubdomainContract {
         owner: Address,
         now_unix: u64,
     ) -> Result<String, SubdomainError> {
+        caller.require_auth();
         let parent_record = get_parent(&env, &parent)?;
         if parent_record.owner != caller && !parent_record.controllers.contains(&caller) {
             return Err(SubdomainError::Unauthorized);
@@ -300,6 +304,7 @@ impl SubdomainContract {
         caller: Address,
         new_owner: Address,
     ) -> Result<(), SubdomainError> {
+        caller.require_auth();
         let mut record = get_subdomain(&env, &fqdn)?;
         if !ensure_parent_is_active(&env, &record.parent) {
             return Err(SubdomainError::ParentNotFound);
@@ -325,6 +330,7 @@ impl SubdomainContract {
     }
 
     pub fn delete(env: Env, fqdn: String, caller: Address) -> Result<(), SubdomainError> {
+        caller.require_auth();
         let record = get_subdomain(&env, &fqdn)?;
         if !ensure_parent_is_active(&env, &record.parent) {
             return Err(SubdomainError::ParentNotFound);
@@ -356,6 +362,7 @@ impl SubdomainContract {
     /// - The owner or a delegated controller of the parent domain can revoke it
     ///   (e.g., to reclaim the namespace or enforce namespace rules).
     pub fn revoke(env: Env, fqdn: String, caller: Address) -> Result<(), SubdomainError> {
+        caller.require_auth();
         let record = get_subdomain(&env, &fqdn)?;
         if !ensure_parent_is_active(&env, &record.parent) {
             return Err(SubdomainError::ParentNotFound);
