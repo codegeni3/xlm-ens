@@ -17,6 +17,7 @@ pub use xlm_ns_common::GRACE_PERIOD_SECONDS;
 
 pub const DEFAULT_GRACE_PERIOD_SECONDS: u64 = GRACE_PERIOD_SECONDS;
 pub const MIN_GRACE_PERIOD_SECONDS: u64 = 86_400; // 1 day
+pub const QUOTE_VALIDITY_SECONDS: u64 = 300; // 5 minutes
 pub const MAX_GRACE_PERIOD_SECONDS: u64 = 31_536_000; // 365 days
 
 pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
@@ -48,6 +49,7 @@ pub struct RegistrationQuote {
     pub fee_stroops: u64,
     pub expiry_unix: u64,
     pub grace_period_ends_at: u64,
+    pub valid_until: u64,
     pub pricing: PricingBreakdown,
 }
 
@@ -140,6 +142,7 @@ pub enum RegistrarError {
     AlreadyInitialized = 10,
     RateLimitExceeded = 11,
     UpgradeFailed = 12,
+    QuoteExpired = 13,
 }
 
 #[contract]
@@ -343,12 +346,17 @@ impl RegistrarContract {
         label: String,
         owner: Address,
         years: u64,
-        payment_stroops: u64,
+        max_price: u64,
         now_unix: u64,
     ) -> Result<(), RegistrarError> {
         owner.require_auth();
 
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
+
+        if now_unix > now_unix.saturating_add(QUOTE_VALIDITY_SECONDS) {
+            return Err(RegistrarError::QuoteExpired);
+        }
+
         validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
 
         if env
@@ -364,8 +372,12 @@ impl RegistrarContract {
         check_rate_limit(&env, &owner, now_unix)?;
 
         let quote = build_quote(&env, &label, years, now_unix);
-        if payment_stroops < quote.fee_stroops {
+        if max_price < quote.fee_stroops {
             return Err(RegistrarError::InsufficientFee);
+        }
+
+        if now_unix > quote.valid_until {
+            return Err(RegistrarError::QuoteExpired);
         }
 
         let name = build_xlm_name(&env, &label).map_err(|_| RegistrarError::Validation)?;
@@ -385,7 +397,7 @@ impl RegistrarContract {
             registered_at: now_unix,
             expires_at: quote.expiry_unix,
             grace_period_ends_at: quote.grace_period_ends_at,
-            fee_paid: payment_stroops,
+            fee_paid: quote.fee_stroops,
             renewed_at: now_unix,
         };
         env.storage()
@@ -402,7 +414,7 @@ impl RegistrarContract {
             .unwrap_or(0);
         env.storage().persistent().set(
             &DataKey::Treasury,
-            &treasury.saturating_add(payment_stroops),
+            &treasury.saturating_add(quote.fee_stroops),
         );
         let reg_count = env
             .storage()
@@ -439,7 +451,7 @@ impl RegistrarContract {
             (
                 label,
                 owner,
-                payment_stroops,
+                quote.fee_stroops,
                 record.expires_at,
                 record.grace_period_ends_at,
             ),
@@ -933,6 +945,7 @@ fn build_quote(env: &Env, label: &String, years: u64, now_unix: u64) -> Registra
         fee_stroops: annual_fee.saturating_mul(years),
         expiry_unix,
         grace_period_ends_at: compute_grace_period_ends_at(env, expiry_unix),
+        valid_until: now_unix.saturating_add(QUOTE_VALIDITY_SECONDS),
         pricing: PricingBreakdown {
             annual_fee_stroops: annual_fee,
             duration_years: years,
