@@ -1,9 +1,9 @@
 use crate::config::NetworkConfig;
 use anyhow::Context;
 use serde::Deserialize;
-use std::path::PathBuf;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 struct CsvRecord {
@@ -91,7 +91,10 @@ pub async fn run_bulk_register(
                 .await
             {
                 Ok(receipt) => {
-                    println!("  - SUCCESS: registered {} to {}", receipt.name, receipt.owner);
+                    println!(
+                        "  - SUCCESS: registered {} to {}",
+                        receipt.name, receipt.owner
+                    );
                     println!("    Fee paid: {} {}", receipt.fee_paid, "XLM");
                     println!("    Expires at: {}", receipt.expires_at);
                     println!("    Status: {}", receipt.submission.status);
@@ -145,10 +148,7 @@ pub async fn run_bulk_renew(
     if dry_run {
         println!("Dry run: The following names would be renewed:");
         for record in records {
-            println!(
-                "  - Name: {}, Duration: {}",
-                record.name, record.duration
-            );
+            println!("  - Name: {}, Duration: {}", record.name, record.duration);
         }
     } else {
         let registrar_id = config

@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, OutputFormat};
+use crate::output::{emit, OutputFormat};
 use anyhow::Context;
 use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
@@ -36,7 +36,7 @@ pub async fn run_reverse(
         );
     } else {
         let message = format!("{} -> [NO PRIMARY NAME]", result.address);
-        emit_error(output, &message, json!({"address": result.address}));
+        return Err(anyhow::anyhow!(message));
     }
 
     Ok(())

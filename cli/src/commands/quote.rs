@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, OutputFormat};
+use crate::output::{emit, OutputFormat};
 use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
 
@@ -115,16 +115,6 @@ pub async fn run_quote(
         }
         Err(err) => {
             let message = format!("ERROR: Failed to fetch registration quote: {err}");
-            emit_error(
-                output,
-                &message,
-                json!({
-                    "error": message,
-                    "label": label,
-                    "duration_years": duration_years,
-                    "registrar_contract_id": registrar_contract_id,
-                }),
-            );
             Err(anyhow::anyhow!(message))
         }
     }
@@ -225,15 +215,6 @@ pub async fn run_availability(
         }
         Err(err) => {
             let message = format!("ERROR: Failed to check availability for {name}: {err}");
-            emit_error(
-                output,
-                &message,
-                json!({
-                    "error": message,
-                    "name": name,
-                    "registry_contract_id": config.registry_contract_id,
-                }),
-            );
             Err(anyhow::anyhow!(message))
         }
     }

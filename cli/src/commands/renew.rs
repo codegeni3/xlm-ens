@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, OutputFormat};
+use crate::output::{emit, OutputFormat};
 use crate::signer::SignerProfile;
 use anyhow::Context;
 use serde_json::json;
@@ -47,7 +47,10 @@ pub async fn run_renew(
             human_lines.push(format!("  Fee Paid: {} XLM", receipt.fee_paid));
             human_lines.push(format!("  New Expiry: {}", receipt.new_expiry));
             human_lines.push(format!("  Status: {}", receipt.submission.status));
-            human_lines.push(format!("  Transaction Hash: {}", receipt.submission.tx_hash));
+            human_lines.push(format!(
+                "  Transaction Hash: {}",
+                receipt.submission.tx_hash
+            ));
 
             emit(
                 output,
@@ -66,11 +69,6 @@ pub async fn run_renew(
         }
         None => {
             let message = format!("Name '{}' is not registered and cannot be renewed.", name);
-            emit_error(
-                output,
-                &message,
-                json!({"error": message.clone(), "name": name}),
-            );
             return Err(anyhow::anyhow!(message));
         }
     }

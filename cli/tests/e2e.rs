@@ -101,7 +101,13 @@ fn register_emits_human_json_and_csv() {
         account_address('H'),
     ]);
 
-    let human = bin().args(&args).assert().success().get_output().stdout.clone();
+    let human = bin()
+        .args(&args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let human_text = String::from_utf8(human).expect("utf8");
     assert!(human_text.contains("Registration quote for alice.xlm:"));
     assert!(human_text.contains("SUCCESS: registered alice.xlm to"));
@@ -114,7 +120,13 @@ fn register_emits_human_json_and_csv() {
         "alice".into(),
         account_address('H'),
     ]);
-    let json = bin().args(&json_args).assert().success().get_output().stdout.clone();
+    let json = bin()
+        .args(&json_args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let json = json_output(&json);
     assert_eq!(json["name"], "alice.xlm");
     assert_eq!(json["owner"], account_address('H'));
@@ -131,7 +143,13 @@ fn register_emits_human_json_and_csv() {
         "alice".into(),
         account_address('H'),
     ]);
-    let csv = bin().args(&csv_args).assert().success().get_output().stdout.clone();
+    let csv = bin()
+        .args(&csv_args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let rows = csv_rows(&csv);
     assert_eq!(rows.len(), 1);
     assert!(rows[0].len() >= 5);
@@ -141,22 +159,50 @@ fn register_emits_human_json_and_csv() {
 fn resolve_emits_human_json_and_csv() {
     let mut human_args = base_args();
     human_args.extend(["resolve".into(), "alice.xlm".into()]);
-    let human = bin().args(&human_args).assert().success().get_output().stdout.clone();
+    let human = bin()
+        .args(&human_args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let human_text = String::from_utf8(human).expect("utf8");
     assert!(human_text.contains("Name: alice.xlm"));
     assert!(human_text.contains("Address: GDRA"));
 
     let mut json_args = base_args();
-    json_args.extend(["--output".into(), "json".into(), "resolve".into(), "alice.xlm".into()]);
-    let json = bin().args(&json_args).assert().success().get_output().stdout.clone();
+    json_args.extend([
+        "--output".into(),
+        "json".into(),
+        "resolve".into(),
+        "alice.xlm".into(),
+    ]);
+    let json = bin()
+        .args(&json_args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let json = json_output(&json);
     assert_eq!(json["name"], "alice.xlm");
     assert!(json["address"].as_str().is_some());
     assert!(json["resolver"].as_str().is_some());
 
     let mut csv_args = base_args();
-    csv_args.extend(["--output".into(), "csv".into(), "resolve".into(), "alice.xlm".into()]);
-    let csv = bin().args(&csv_args).assert().success().get_output().stdout.clone();
+    csv_args.extend([
+        "--output".into(),
+        "csv".into(),
+        "resolve".into(),
+        "alice.xlm".into(),
+    ]);
+    let csv = bin()
+        .args(&csv_args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     let rows = csv_rows(&csv);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].len(), 4);
@@ -178,7 +224,12 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert!(whois_human.contains("Owner:"));
 
     let mut whois_json_args = base_args();
-    whois_json_args.extend(["--output".into(), "json".into(), "whois".into(), "alice.xlm".into()]);
+    whois_json_args.extend([
+        "--output".into(),
+        "json".into(),
+        "whois".into(),
+        "alice.xlm".into(),
+    ]);
     let whois_json = bin()
         .args(&whois_json_args)
         .assert()
@@ -206,7 +257,9 @@ fn whois_and_portfolio_support_machine_readable_formats() {
         .stdout
         .clone();
     let portfolio_json: Value = json_output(&portfolio_json);
-    let items = portfolio_json.as_array().expect("portfolio json should be an array");
+    let items = portfolio_json
+        .as_array()
+        .expect("portfolio json should be an array");
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["owner"], owner);
 
@@ -224,12 +277,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert!(portfolio_human.contains("alice.xlm"));
 
     let mut portfolio_csv_args = base_args();
-    portfolio_csv_args.extend([
-        "--output".into(),
-        "csv".into(),
-        "portfolio".into(),
-        owner,
-    ]);
+    portfolio_csv_args.extend(["--output".into(), "csv".into(), "portfolio".into(), owner]);
     let portfolio_csv = bin()
         .args(&portfolio_csv_args)
         .assert()
@@ -264,7 +312,12 @@ fn transfer_and_renew_emit_structured_output() {
     assert_eq!(transfer_json["status"], "submitted");
 
     let mut renew_csv_args = base_args();
-    renew_csv_args.extend(["--output".into(), "csv".into(), "renew".into(), "alice.xlm".into()]);
+    renew_csv_args.extend([
+        "--output".into(),
+        "csv".into(),
+        "renew".into(),
+        "alice.xlm".into(),
+    ]);
     let renew_csv = bin()
         .args(&renew_csv_args)
         .assert()
@@ -295,7 +348,8 @@ fn missing_arguments_and_invalid_inputs_fail_cleanly() {
         .args(&args)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Failed to submit transfer"))
+        .stderr(predicate::str::contains("Error:"))
+        .stderr(predicate::str::contains("Suggestion:"))
         .stderr(predicate::str::contains("new_owner is invalid"));
 
     let mut renew_args = base_args();
@@ -304,7 +358,7 @@ fn missing_arguments_and_invalid_inputs_fail_cleanly() {
         .args(&renew_args)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "is not registered and cannot be renewed",
-        ));
+        .stderr(predicate::str::contains("Error:"))
+        .stderr(predicate::str::contains("Suggestion:"))
+        .stderr(predicate::str::contains("not registered"));
 }

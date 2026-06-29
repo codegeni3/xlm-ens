@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, OutputFormat};
+use crate::output::{emit, OutputFormat};
 use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
 
@@ -75,17 +75,7 @@ pub async fn run_whois(
         }
         Err(err) => {
             let message = format!("ERROR: Failed to fetch registration for {name}: {err}");
-            emit_error(
-                output,
-                &message,
-                json!({
-                    "error": message,
-                    "name": name,
-                    "registry_contract_id": config.registry_contract_id,
-                    "rpc_url": config.rpc_url,
-                    "network": config.network.as_str(),
-                }),
-            );
+            return Err(anyhow::anyhow!(message));
         }
     }
     Ok(())

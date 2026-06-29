@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, OutputFormat};
+use crate::output::{emit, OutputFormat};
 use anyhow::{anyhow, Context};
 use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
@@ -39,11 +39,6 @@ pub async fn run_resolve(
         Ok(())
     } else {
         let message = format!("Name '{}' not found or has no resolution", name);
-        emit_error(
-            output,
-            &message,
-            json!({"error": message.clone(), "name": name}),
-        );
         Err(anyhow!(message))
     }
 }
