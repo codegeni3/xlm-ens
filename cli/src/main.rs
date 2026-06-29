@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use commands::completions::CompletionCommand;
 use commands::watch::WatchCommand;
 use config::{ContractKind, ContractOverrides, Network, ResolveOptions, load_config};
-use output::OutputFormat;
+use output::{configure as configure_output, print_human_err, OutputFormat};
 use signer::{SignerProfile, load_profile};
 use std::path::PathBuf;
 use std::process;
@@ -34,6 +34,10 @@ struct Cli {
     /// Output format. Use 'json' or 'csv' for machine-readable export suitable for piping or automation.
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, global = true)]
     output: OutputFormat,
+
+    /// Disable terminal colors and progress indicators.
+    #[arg(long, global = true)]
+    no_color: bool,
 
     /// Simulate the transaction without submitting it
     #[arg(long, global = true)]
@@ -405,6 +409,7 @@ fn resolve_signer(name: Option<String>) -> anyhow::Result<Option<SignerProfile>>
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    configure_output(cli.no_color);
 
     if let Commands::Completions(command) = cli.command.clone() {
         commands::completions::run_completion_command::<Cli>(command, BIN_NAME)?;
@@ -452,13 +457,25 @@ async fn run() -> anyhow::Result<()> {
             commands::reverse::run_reverse(config, cli.output, &address).await
         }
         Commands::Text(sub) => match sub {
-            TextCommand::Get { name, key } => commands::text::run_get(config, &name, &key).await,
+            TextCommand::Get { name, key } => {
+                commands::text::run_get(config, cli.output, &name, &key).await
+            }
             TextCommand::Set {
                 name,
                 key,
                 value,
                 signer,
-            } => commands::text::run_set(config, &name, &key, value, resolve_signer(signer)?).await,
+            } => {
+                commands::text::run_set(
+                    config,
+                    cli.output,
+                    &name,
+                    &key,
+                    value,
+                    resolve_signer(signer)?,
+                )
+                .await
+            }
         },
         Commands::Transfer {
             name,
@@ -491,6 +508,7 @@ async fn run() -> anyhow::Result<()> {
             } => {
                 commands::auction::run_create(
                     config,
+                    cli.output,
                     &name,
                     reserve,
                     duration,
@@ -502,12 +520,27 @@ async fn run() -> anyhow::Result<()> {
                 name,
                 amount,
                 signer,
-            } => commands::auction::run_bid(config, &name, amount, resolve_signer(signer)?).await,
+            } => {
+                commands::auction::run_bid(
+                    config,
+                    cli.output,
+                    &name,
+                    amount,
+                    resolve_signer(signer)?,
+                )
+                .await
+            }
             AuctionCommands::Inspect { name } => {
                 commands::auction::run_inspect(config, &name).await
             }
             AuctionCommands::Settle { name, signer } => {
-                commands::auction::run_settle(config, &name, resolve_signer(signer)?).await
+                commands::auction::run_settle(
+                    config,
+                    cli.output,
+                    &name,
+                    resolve_signer(signer)?,
+                )
+                .await
             }
             AuctionCommands::Export { .. } | AuctionCommands::Import { .. } => Err(
                 anyhow::anyhow!("auction text import/export is not implemented"),
@@ -515,13 +548,13 @@ async fn run() -> anyhow::Result<()> {
         },
         Commands::Bridge(command) => match command {
             BridgeCommands::Register { chain } => {
-                commands::bridge::run_register_chain(config, &chain).await
+                commands::bridge::run_register_chain(config, cli.output, &chain).await
             }
             BridgeCommands::Inspect { chain } => {
                 commands::bridge::run_inspect_route(config, &chain).await
             }
             BridgeCommands::Payload { name, chain } => {
-                commands::bridge::run_generate_payload(config, &name, &chain).await
+                commands::bridge::run_generate_payload(config, cli.output, &name, &chain).await
             }
             BridgeCommands::TestVectors => Err(anyhow::anyhow!(
                 "bridge test vector export is not implemented"
@@ -529,18 +562,39 @@ async fn run() -> anyhow::Result<()> {
         },
         Commands::Subdomain(command) => match command {
             SubdomainCommands::RegisterParent { parent, owner } => {
-                commands::subdomain::run_register_parent(config, &parent, &owner).await
+                commands::subdomain::run_register_parent(config, cli.output, &parent, &owner).await
             }
             SubdomainCommands::AddController { parent, controller } => {
-                commands::subdomain::run_add_controller(config, &parent, &controller).await
+                commands::subdomain::run_add_controller(
+                    config,
+                    cli.output,
+                    &parent,
+                    &controller,
+                )
+                .await
             }
             SubdomainCommands::Create {
                 label,
                 parent,
                 owner,
-            } => commands::subdomain::run_create_subdomain(config, &label, &parent, &owner).await,
+            } => {
+                commands::subdomain::run_create_subdomain(
+                    config,
+                    cli.output,
+                    &label,
+                    &parent,
+                    &owner,
+                )
+                .await
+            }
             SubdomainCommands::Transfer { fqdn, new_owner } => {
-                commands::subdomain::run_transfer_subdomain(config, &fqdn, &new_owner).await
+                commands::subdomain::run_transfer_subdomain(
+                    config,
+                    cli.output,
+                    &fqdn,
+                    &new_owner,
+                )
+                .await
             }
         },
         Commands::Nft(command) => match command {
@@ -608,7 +662,7 @@ async fn run() -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("Error: {:?}", e);
+        print_human_err(&format!("Error: {:?}", e));
         process::exit(1);
     }
 }
