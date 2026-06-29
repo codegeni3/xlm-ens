@@ -1,5 +1,5 @@
-use crate::config::{Network, ResolveOptions, config_template, load_config};
-use crate::output::{OutputFormat, emit};
+use crate::config::{config_template, load_config, Network, ResolveOptions};
+use crate::output::{emit, OutputFormat};
 use serde_json::json;
 use std::env;
 use std::fs;
