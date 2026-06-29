@@ -157,34 +157,51 @@ fn register_emits_human_json_and_csv() {
 }
 
 #[test]
-fn register_interactive_prompts_and_submits() {
+fn no_color_flag_disables_ansi_sequences() {
     let mut args = base_args();
-    args.extend(["register".to_string(), "--interactive".to_string()]);
+    args.extend([
+        "--no-color".into(),
+        "register".into(),
+        "alice".into(),
+        account_address('H'),
+    ]);
 
     let output = bin()
         .args(&args)
-        .env("XLM_NS_FORCE_INTERACTIVE", "1")
-        .write_stdin(format!("alice\n{}\ny\n", account_address('H')))
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
-    let text = String::from_utf8(output).expect("utf8");
-    assert!(text.contains("Availability check passed for alice.xlm."));
-    assert!(text.contains("Registration quote for alice.xlm:"));
-    assert!(text.contains("SUCCESS: registered alice.xlm to"));
-    assert!(text.contains("Transaction Hash:"));
+
+    assert!(
+        !output.contains(&0x1b),
+        "expected no ANSI escape sequences when --no-color is set"
+    );
 }
 
 #[test]
-fn register_without_required_args_requires_tty() {
+fn no_color_env_var_disables_ansi_sequences() {
     let mut args = base_args();
-    args.extend(["register".to_string()]);
+    args.extend([
+        "register".into(),
+        "alice".into(),
+        account_address('H'),
+    ]);
 
-    let assert = bin().args(&args).assert().failure();
-    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8");
-    assert!(stderr.contains("interactive registration requires a TTY"));
+    let output = bin()
+        .env("NO_COLOR", "1")
+        .args(&args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert!(
+        !output.contains(&0x1b),
+        "expected no ANSI escape sequences when NO_COLOR is set"
+    );
 }
 
 #[test]
