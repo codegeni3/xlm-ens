@@ -1,8 +1,14 @@
 use crate::config::NetworkConfig;
+use crate::output::{emit, emit_error, with_spinner, OutputFormat};
 use anyhow::{anyhow, Context};
+use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
 
-pub async fn run_resolve(config: NetworkConfig, name: &str) -> anyhow::Result<()> {
+pub async fn run_resolve(
+    config: NetworkConfig,
+    output: OutputFormat,
+    name: &str,
+) -> anyhow::Result<()> {
     let client = XlmNsClient::new(
         config.rpc_url,
         Some(config.network_passphrase),
@@ -12,22 +18,29 @@ pub async fn run_resolve(config: NetworkConfig, name: &str) -> anyhow::Result<()
         config.auction_contract_id.clone(),
     );
 
-    let result = client
-        .resolve(name)
-        .await
-        .context("Failed to resolve name")?;
+    let result = with_spinner(
+        format!("Resolving {name}"),
+        output,
+        client.resolve(name),
+    )
+    .await
+    .context("Failed to resolve name")?;
 
     if let Some(addr) = result.address {
-        println!("Name: {}", result.name);
-        println!("Address: {}", addr);
+        crate::output::print_human(&format!("Name: {}\nAddress: {}", result.name, addr));
         if let Some(resolver) = result.resolver {
-            println!("Resolver: {}", resolver);
+            crate::output::print_human(&format!("Resolver: {}", resolver));
         }
+        crate::output::print_human(&format!(
+            "Resolved via wildcard: {}",
+            if result.is_wildcard { "yes" } else { "no" }
+        ));
         if let Some(expiry) = result.expires_at {
-            println!("Expires at: {}", expiry);
+            crate::output::print_human(&format!("Expires at: {}", expiry));
         }
         Ok(())
     } else {
-        Err(anyhow!("Name '{}' not found or has no resolution", name))
+        let message = format!("Name '{}' not found or has no resolution", name);
+        Err(anyhow!(message))
     }
 }

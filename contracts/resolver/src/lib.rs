@@ -1,8 +1,9 @@
+#![cfg_attr(not(test), no_std)]
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address, Env,
-    IntoVal, Map, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    Bytes, Env, Error, IntoVal, Map, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::RegistryEntry;
@@ -44,10 +45,12 @@ pub struct ResolutionRecord {
     pub addresses: Map<String, String>, // chain_name -> address (e.g., "stellar" -> address, "ethereum" -> address)
     pub text_records: Map<String, String>,
     pub updated_at: u64,
+    pub is_wildcard: bool,
 }
 
 // For backwards compatibility, use a default chain identifier
 const DEFAULT_CHAIN: &str = "stellar";
+const DEFAULT_FALLBACK_DEPTH: u32 = 3;
 
 // #154: Maximum number of operations in a single batch_set call
 const MAX_BATCH_OPS: usize = 16;
@@ -67,7 +70,11 @@ enum DataKey {
     Forward(String),
     Reverse(String), // address -> name (for primary/reverse lookups)
     Primary(String), // address -> name (for primary names)
+    Wildcard(String),
     Registry,
+    SubdomainContract,
+    Admin,
+    ContractVersion,
 }
 
 #[contracterror]
@@ -85,6 +92,7 @@ pub enum ResolverError {
     InvalidKey = 8,
     // #154: batch payload exceeds the allowed operation count
     BatchTooLarge = 9,
+    UpgradeFailed = 10,
 }
 
 // -------------------------------------------------------------------
@@ -93,6 +101,7 @@ pub enum ResolverError {
 
 /// Emitted when a forward record (name → address) is created or updated.
 #[contractevent]
+#[contracttype]
 pub struct ForwardUpdated {
     pub name: String,
     pub address: String,
@@ -102,6 +111,7 @@ pub struct ForwardUpdated {
 
 /// Emitted when a reverse mapping (address → name) is written.
 #[contractevent]
+#[contracttype]
 pub struct ReverseUpdated {
     pub address: String,
     pub name: String,
@@ -109,6 +119,7 @@ pub struct ReverseUpdated {
 
 /// Emitted when a primary name is set for an address.
 #[contractevent]
+#[contracttype]
 pub struct PrimaryNameSet {
     pub address: String,
     pub name: String,
@@ -116,6 +127,7 @@ pub struct PrimaryNameSet {
 
 /// Emitted when a text record is created or updated.
 #[contractevent]
+#[contracttype]
 pub struct TextRecordUpdated {
     pub name: String,
     pub key: String,
@@ -125,9 +137,19 @@ pub struct TextRecordUpdated {
 
 /// Emitted when a record (and its reverse/primary) is removed.
 #[contractevent]
+#[contracttype]
 pub struct RecordRemoved {
     pub name: String,
     pub former_address: Option<String>,
+}
+
+/// Emitted when the contract is upgraded.
+#[contractevent]
+#[contracttype]
+pub struct ContractUpgraded {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub admin: Address,
 }
 
 pub const CONTRACT_VERSION: u32 = 1;
@@ -141,12 +163,78 @@ impl ResolverContract {
         CONTRACT_VERSION
     }
 
-    pub fn initialize(env: Env, registry: Address) -> Result<(), ResolverError> {
+    pub fn initialize(env: Env, registry: Address, admin: Address) -> Result<(), ResolverError> {
         if env.storage().instance().has(&DataKey::Registry) {
             return Err(ResolverError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CONTRACT_VERSION);
         extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    pub fn set_subdomain_contract(
+        env: Env,
+        subdomain_contract: Address,
+    ) -> Result<(), ResolverError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ResolverError::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::SubdomainContract, &subdomain_contract);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(CONTRACT_VERSION)
+    }
+
+    pub fn upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+        migration_data: Bytes,
+    ) -> Result<(), ResolverError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(ResolverError::UpgradeFailed)?;
+        admin.require_auth();
+
+        let current_version = Self::get_version(env.clone());
+        let target_version = decode_target_version(&migration_data);
+
+        for v in current_version..target_version {
+            migrate(v, v + 1, &migration_data);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &target_version);
+
+        env.events().publish(
+            (symbol_short!("resolver"), symbol_short!("upgraded")),
+            ContractUpgraded {
+                old_version: current_version,
+                new_version: target_version,
+                admin,
+            },
+        );
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.to_bytes());
+
         Ok(())
     }
 
@@ -157,7 +245,8 @@ impl ResolverContract {
         address: String,
         now_unix: u64,
     ) -> Result<(), ResolverError> {
-        validate_fqdn_soroban(&name).map_err(|_| ResolverError::Validation)?;
+        owner.require_auth();
+        validate_fqdn_soroban(&name).map_err(|_| ResolverError::Validation)?; 
         let registry_backed_owner = registry_owner(&env, &name, now_unix)?;
         let canonical_owner = match registry_backed_owner.clone() {
             Some(registry_owner) => {
@@ -209,6 +298,7 @@ impl ResolverContract {
             addresses,
             text_records,
             updated_at: now_unix,
+            is_wildcard: false,
         };
 
         let fwd_key = DataKey::Forward(name.clone());
@@ -247,6 +337,7 @@ impl ResolverContract {
         address: String,
         now_unix: u64,
     ) -> Result<(), ResolverError> {
+        caller.require_auth();
         let mut record = get_record(&env, &name)?;
         assert_owner(&env, &name, &record, &caller, now_unix)?;
 
@@ -303,6 +394,7 @@ impl ResolverContract {
         value: String,
         now_unix: u64,
     ) -> Result<(), ResolverError> {
+        caller.require_auth();
         // Issue #314: Validate text-record key normalization.
         validate_text_record_key(&key).map_err(|_| ResolverError::InvalidKey)?;
 
@@ -337,6 +429,7 @@ impl ResolverContract {
         caller: Address,
         name: String,
     ) -> Result<(), ResolverError> {
+        caller.require_auth();
         let record = get_record(&env, &name)?;
         assert_owner(&env, &name, &record, &caller, 0)?;
         if let Some(stellar_addr) = record.addresses.get(String::from_str(&env, DEFAULT_CHAIN)) {
@@ -361,6 +454,7 @@ impl ResolverContract {
     }
 
     pub fn remove_record(env: Env, name: String, caller: Address) -> Result<(), ResolverError> {
+        caller.require_auth();
         let record = get_record(&env, &name)?;
         assert_owner(&env, &name, &record, &caller, 0)?;
 
@@ -378,6 +472,9 @@ impl ResolverContract {
         env.storage()
             .persistent()
             .remove(&DataKey::Forward(name.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Wildcard(name.clone()));
 
         // #141: Emit removal event
         env.events().publish(
@@ -388,12 +485,41 @@ impl ResolverContract {
         Ok(())
     }
 
+    /// Synchronize reverse resolution after a registry transfer.
+    ///
+    /// This is called by the registry immediately after ownership changes so
+    /// stale reverse and primary mappings for the previous owner do not linger.
+    pub fn clear_reverse_record(env: Env, name: String, previous_owner: Address) {
+        let registry = get_registry(&env).expect("resolver not initialized");
+        assert_eq!(
+            env.caller(),
+            registry,
+            "only the registry may sync reverse state"
+        );
+
+        let previous_owner_key = previous_owner.to_string();
+        let reverse_key = DataKey::Reverse(previous_owner_key.clone());
+        if let Some(current_name) = env.storage().persistent().get::<_, String>(&reverse_key) {
+            if current_name == name {
+                env.storage().persistent().remove(&reverse_key);
+            }
+        }
+
+        let primary_key = DataKey::Primary(previous_owner_key);
+        if let Some(current_name) = env.storage().persistent().get::<_, String>(&primary_key) {
+            if current_name == name {
+                env.storage().persistent().remove(&primary_key);
+            }
+        }
+    }
+
     pub fn update_owner(
         env: Env,
         name: String,
         caller: Address,
         new_owner: Address,
     ) -> Result<(), ResolverError> {
+        caller.require_auth();
         let record = get_record(&env, &name)?;
         assert_owner(&env, &name, &record, &caller, 0)?;
         let mut record = record;
@@ -403,7 +529,10 @@ impl ResolverContract {
     }
 
     pub fn resolve(env: Env, name: String) -> Option<ResolutionRecord> {
-        env.storage().persistent().get(&DataKey::Forward(name))
+        resolve_with_fallback(&env, &name).map(|(mut record, is_wildcard)| {
+            record.is_wildcard = is_wildcard;
+            record
+        })
     }
 
     // Helper method to get the default (Stellar) address for backwards compatibility
@@ -421,10 +550,29 @@ impl ResolverContract {
     }
 
     pub fn reverse(env: Env, address: String) -> Option<String> {
-        env.storage()
+        if let Some(name) = env
+            .storage()
             .persistent()
-            .get(&DataKey::Primary(address.clone()))
-            .or_else(|| env.storage().persistent().get(&DataKey::Reverse(address)))
+            .get::<_, String>(&DataKey::Primary(address.clone()))
+        {
+            if reverse_lookup_matches_current_owner(&env, &name, &address) {
+                return Some(name);
+            }
+            cleanup_stale_reverse(&env, &address, &name);
+        }
+
+        if let Some(name) = env
+            .storage()
+            .persistent()
+            .get::<_, String>(&DataKey::Reverse(address.clone()))
+        {
+            if reverse_lookup_matches_current_owner(&env, &name, &address) {
+                return Some(name);
+            }
+            cleanup_stale_reverse(&env, &address, &name);
+        }
+
+        None
     }
 
     pub fn transfer_record_owner(
@@ -433,6 +581,7 @@ impl ResolverContract {
         caller: Address,
         new_owner: Address,
     ) -> Result<(), ResolverError> {
+        caller.require_auth();
         let mut record = get_record(&env, &name)?;
         if record.owner != caller {
             return Err(ResolverError::Unauthorized);
@@ -446,29 +595,34 @@ impl ResolverContract {
     pub fn batch_resolve(env: Env, names: Vec<String>) -> Vec<Option<ResolutionRecord>> {
         let mut out = Vec::new(&env);
         for name in names.iter() {
-            out.push_back(
-                env.storage()
-                    .persistent()
-                    .get(&DataKey::Forward(name.clone())),
-            );
+            out.push_back(Self::resolve(env.clone(), name.clone()));
         }
         out
+    }
+
+    pub fn set_wildcard_resolution(
+        env: Env,
+        name: String,
+        caller: Address,
+        enabled: bool,
+        now_unix: u64,
+    ) -> Result<(), ResolverError> {
+        validate_fqdn_soroban(&name).map_err(|_| ResolverError::Validation)?;
+        let record = get_record(&env, &name)?;
+        assert_owner(&env, &name, &record, &caller, now_unix)?;
+
+        let key = DataKey::Wildcard(name);
+        env.storage().persistent().set(&key, &enabled);
+        extend_persistent_ttl(&env, &key);
+        extend_instance_ttl(&env);
+        Ok(())
     }
 
     // Issue #321: Batch reverse lookup for multiple addresses
     pub fn batch_reverse(env: Env, addresses: Vec<String>) -> Vec<Option<String>> {
         let mut out = Vec::new(&env);
         for address in addresses.iter() {
-            out.push_back(
-                env.storage()
-                    .persistent()
-                    .get(&DataKey::Primary(address.clone()))
-                    .or_else(|| {
-                        env.storage()
-                            .persistent()
-                            .get(&DataKey::Reverse(address.clone()))
-                    }),
-            );
+            out.push_back(Self::reverse(env.clone(), address.clone()));
         }
         out
     }
@@ -487,6 +641,7 @@ impl ResolverContract {
         now_unix: u64,
     ) -> Result<u32, ResolverError> {
         validate_fqdn_soroban(&name).map_err(|_| ResolverError::Validation)?;
+        caller.require_auth();
 
         if ops.len() as usize > MAX_BATCH_OPS {
             return Err(ResolverError::BatchTooLarge);
@@ -629,6 +784,118 @@ fn get_record(env: &Env, name: &String) -> Result<ResolutionRecord, ResolverErro
         .ok_or(ResolverError::RecordNotFound)
 }
 
+fn wildcard_resolution_enabled(env: &Env, name: &String) -> bool {
+    env.storage()
+        .persistent()
+        .get::<_, bool>(&DataKey::Wildcard(name.clone()))
+        .unwrap_or(true)
+}
+
+fn resolve_with_fallback(env: &Env, name: &String) -> Option<(ResolutionRecord, bool)> {
+    if validate_fqdn_soroban(name).is_err() {
+        return None;
+    }
+
+    let mut current = name.clone();
+    let mut hops: u32 = 0;
+    let max_hops = fallback_depth_limit(env);
+
+    loop {
+        if let Some(record) = env
+            .storage()
+            .persistent()
+            .get::<_, ResolutionRecord>(&DataKey::Forward(current.clone()))
+        {
+            if current == *name {
+                return Some((record, false));
+            }
+
+            if wildcard_resolution_enabled(env, &current) {
+                return Some((record, true));
+            }
+
+            return None;
+        }
+
+        if hops >= max_hops {
+            return None;
+        }
+
+        let Some(parent) = parent_name(env, &current) else {
+            return None;
+        };
+        current = parent;
+        hops += 1;
+    }
+}
+
+fn parent_name(env: &Env, name: &String) -> Option<String> {
+    let name_str = name.to_string();
+    let (parent, _) = name_str.split_once('.')?;
+    Some(String::from_str(env, parent))
+}
+
+fn fallback_depth_limit(env: &Env) -> u32 {
+    let Some(subdomain_contract) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::SubdomainContract)
+    else {
+        return DEFAULT_FALLBACK_DEPTH;
+    };
+
+    match env.try_invoke_contract::<u32, Error>(
+        &subdomain_contract,
+        &Symbol::new(env, "max_depth"),
+        ().into_val(env),
+    ) {
+        Ok(Ok(depth)) => depth,
+        _ => DEFAULT_FALLBACK_DEPTH,
+    }
+}
+
+fn cleanup_stale_reverse(env: &Env, address: &String, name: &String) {
+    let reverse_key = DataKey::Reverse(address.clone());
+    if let Some(current_name) = env.storage().persistent().get::<_, String>(&reverse_key) {
+        if current_name == *name {
+            env.storage().persistent().remove(&reverse_key);
+        }
+    }
+
+    let primary_key = DataKey::Primary(address.clone());
+    if let Some(current_name) = env.storage().persistent().get::<_, String>(&primary_key) {
+        if current_name == *name {
+            env.storage().persistent().remove(&primary_key);
+        }
+    }
+}
+
+fn reverse_lookup_matches_current_owner(env: &Env, name: &String, address: &String) -> bool {
+    let current_owner = if let Some(registry) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Registry)
+    {
+        let now_unix = env.ledger().timestamp();
+        match env.try_invoke_contract::<RegistryEntry, Error>(
+            &registry,
+            &Symbol::new(env, "resolve"),
+            (name.clone(), now_unix).into_val(env),
+        ) {
+            Ok(Ok(entry)) => Some(entry.owner.to_string()),
+            _ => None,
+        }
+    } else {
+        get_record(env, name)
+            .ok()
+            .map(|record| record.owner.to_string())
+    };
+
+    current_owner
+        .map(|owner| owner == *address)
+        .unwrap_or(false)
+}
+
 /// Write a record and unconditionally extend its TTL (#146).
 fn put_record(env: &Env, name: &String, record: &ResolutionRecord) {
     let key = DataKey::Forward(name.clone());
@@ -664,4 +931,19 @@ fn validate_text_record_key(key: &String) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+fn migrate(from_version: u32, to_version: u32, _data: &Bytes) {
+    let _ = (from_version, to_version);
+}
+
+fn decode_target_version(data: &Bytes) -> u32 {
+    if data.len() < 4 {
+        return CONTRACT_VERSION + 1;
+    }
+    let b0 = data.get(0).unwrap_or(0);
+    let b1 = data.get(1).unwrap_or(0);
+    let b2 = data.get(2).unwrap_or(0);
+    let b3 = data.get(3).unwrap_or(0);
+    u32::from_be_bytes([b0, b1, b2, b3])
 }

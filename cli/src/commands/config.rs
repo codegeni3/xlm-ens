@@ -1,5 +1,5 @@
-use crate::config::{config_template, load_config, Network, ResolveOptions};
-use crate::output::{emit, OutputFormat};
+use crate::config::{Network, ResolveOptions, config_template, load_config};
+use crate::output::{emit, print_human, OutputFormat};
 use serde_json::json;
 use std::env;
 use std::fs;
@@ -9,11 +9,6 @@ use std::process::Command;
 
 fn resolve_path(path: Option<PathBuf>) -> PathBuf {
     path.unwrap_or_else(|| PathBuf::from(".xlm-ns.toml"))
-}
-
-fn parse_network(network: &str) -> anyhow::Result<Network> {
-    Network::parse(network)
-        .ok_or_else(|| anyhow::anyhow!("invalid network '{network}' (expected testnet or mainnet)"))
 }
 
 fn write_template(path: &Path, network: Network, force: bool) -> anyhow::Result<()> {
@@ -58,17 +53,15 @@ fn open_editor(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run_init(path: Option<PathBuf>, network: &str, force: bool) -> anyhow::Result<()> {
-    let network = parse_network(network)?;
+pub async fn run_init(path: Option<PathBuf>, network: Network, force: bool) -> anyhow::Result<()> {
     let path = resolve_path(path);
     write_template(&path, network, force)?;
 
-    println!("Wrote config template to {}", path.display());
+    print_human(&format!("Wrote config template to {}", path.display()));
     Ok(())
 }
 
-pub async fn run_edit(path: Option<PathBuf>, network: &str) -> anyhow::Result<()> {
-    let network = parse_network(network)?;
+pub async fn run_edit(path: Option<PathBuf>, network: Network) -> anyhow::Result<()> {
     let path = resolve_path(path);
     if !path.exists() {
         write_template(&path, network, false)?;
@@ -80,13 +73,90 @@ pub async fn run_edit(path: Option<PathBuf>, network: &str) -> anyhow::Result<()
 
 pub async fn run_validate(
     path: Option<PathBuf>,
-    network: &str,
+    network: Network,
+    output: OutputFormat,
+    _fix: bool,
+) -> anyhow::Result<()> {
+    let config = load_config(
+        network,
+        ResolveOptions {
+            config_path: path,
+            ..ResolveOptions::default()
+        },
+    )?;
+
+    let validation = crate::commands::validate::run(&config).await;
+    let mut failures = 0;
+
+    if output == OutputFormat::Human {
+        print_human(&format!("Validating configuration for {}...", network.as_str()));
+        for result in &validation.contract_id_format {
+            if result.status == crate::commands::validate::ValidationStatus::Fail {
+                failures += 1;
+            }
+            print_human(&format!("[{}] {}", result.status, result.name));
+        }
+        if validation.rpc_connectivity.status == crate::commands::validate::ValidationStatus::Fail {
+            failures += 1;
+        }
+        print_human(&format!(
+            "[{}] {}",
+            validation.rpc_connectivity.status, validation.rpc_connectivity.name
+        ));
+        if validation.network_passphrase.status == crate::commands::validate::ValidationStatus::Fail
+        {
+            failures += 1;
+        }
+        print_human(&format!(
+            "[{}] {}",
+            validation.network_passphrase.status, validation.network_passphrase.name
+        ));
+        if validation.signing_key.status == crate::commands::validate::ValidationStatus::Fail {
+            failures += 1;
+        }
+        print_human(&format!(
+            "[{}] {}",
+            validation.signing_key.status, validation.signing_key.name
+        ));
+
+        if failures > 0 {
+            print_human(&format!("\nValidation failed with {failures} errors."));
+            std::process::exit(1);
+        } else {
+            print_human("\nConfiguration is valid.");
+        }
+    } else {
+        let mut results = validation.contract_id_format;
+        results.push(validation.rpc_connectivity);
+        results.push(validation.network_passphrase);
+        results.push(validation.signing_key);
+
+        let ok = results
+            .iter()
+            .all(|r| r.status == crate::commands::validate::ValidationStatus::Pass);
+
+        emit(
+            output,
+            "Validation results",
+            json!({
+                "ok": ok,
+                "results": results,
+            }),
+        );
+
+        if !ok {
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_show(
+    path: Option<PathBuf>,
+    network: Network,
     output: OutputFormat,
 ) -> anyhow::Result<()> {
-    let network = parse_network(network)?;
-    let resolved_path = path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(".xlm-ns.toml"));
     let config = load_config(
         network,
         ResolveOptions {
@@ -97,17 +167,12 @@ pub async fn run_validate(
 
     emit(
         output,
-        &format!(
-            "Config is valid for {} ({})",
-            config.network.as_str(),
-            resolved_path.display()
-        ),
+        "Current configuration",
         json!({
-            "ok": true,
             "network": config.network.as_str(),
             "config_path": config.config_path,
             "rpc_url": config.rpc_url,
-            "network_passphrase": config.network_passphrase,
+            "network_passphrase": "[REDACTED]",
             "registry_contract_id": config.registry_contract_id,
             "registrar_contract_id": config.registrar_contract_id,
             "resolver_contract_id": config.resolver_contract_id,

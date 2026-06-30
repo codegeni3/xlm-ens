@@ -264,4 +264,68 @@ mod registrar_registry_integration {
             NameState::Claimable
         );
     }
+
+    /// During the grace period the registry must not resolve the name, while the
+    /// original owner can still extend via `extend_during_grace`.
+    #[test]
+    fn grace_period_blocks_resolution_and_allows_owner_renewal() {
+        let (env, registrar, registry) = setup_env();
+        let owner = Address::generate(&env);
+        let intruder = Address::generate(&env);
+        let label = String::from_str(&env, "graceflow");
+        let name = String::from_str(&env, "graceflow.xlm");
+        let start = 40_000_000u64;
+
+        let quote = registrar.quote_registration(&label, &1, &start);
+        registrar.register(&label, &owner, &1, &quote.fee_stroops, &start);
+
+        let in_grace = quote.expiry_unix + 1;
+        assert_eq!(
+            registry.name_state(&name, &in_grace),
+            NameState::GracePeriod
+        );
+
+        let resolve_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            registry.resolve(&name, &in_grace);
+        }));
+        assert!(
+            resolve_result.is_err(),
+            "registry resolve must fail during grace period"
+        );
+
+        let register_result =
+            registrar.try_register(&label, &intruder, &1, &quote.fee_stroops, &in_grace);
+        assert!(
+            register_result.is_err(),
+            "new registration must be blocked during grace period"
+        );
+
+        registrar.extend_during_grace(&name, &owner, &1, &quote.fee_stroops, &in_grace);
+
+        let record = registrar.registration(&name).unwrap();
+        let entry = registry.resolve(&name, &in_grace);
+        assert!(record.expires_at > in_grace);
+        assert_eq!(record.expires_at, entry.expires_at);
+        assert_eq!(registry.name_state(&name, &in_grace), NameState::Active);
+    }
+
+    /// After the grace window ends without renewal, the name becomes claimable.
+    #[test]
+    fn name_becomes_available_after_grace_period() {
+        let (env, registrar, registry) = setup_env();
+        let owner = Address::generate(&env);
+        let label = String::from_str(&env, "released");
+        let name = String::from_str(&env, "released.xlm");
+        let start = 50_000_000u64;
+
+        let quote = registrar.quote_registration(&label, &1, &start);
+        registrar.register(&label, &owner, &1, &quote.fee_stroops, &start);
+
+        let after_grace = quote.grace_period_ends_at + 1;
+        assert!(registrar.is_available(&label, &after_grace));
+        assert_eq!(
+            registry.name_state(&name, &after_grace),
+            NameState::Claimable
+        );
+    }
 }

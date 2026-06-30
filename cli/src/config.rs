@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
@@ -6,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use xlm_ns_common::validation::validate_contract_id;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Network {
     Testnet,
     Mainnet,
@@ -147,6 +148,18 @@ impl NetworkConfig {
             ContractKind::Subdomain => self.subdomain_contract_id.as_deref(),
             ContractKind::Nft => self.nft_contract_id.as_deref(),
         }
+    }
+
+    pub fn all_contract_ids(&self) -> Vec<(&'static str, Option<&String>)> {
+        vec![
+            ("registry", self.registry_contract_id.as_ref()),
+            ("registrar", self.registrar_contract_id.as_ref()),
+            ("resolver", self.resolver_contract_id.as_ref()),
+            ("auction", self.auction_contract_id.as_ref()),
+            ("bridge", self.bridge_contract_id.as_ref()),
+            ("subdomain", self.subdomain_contract_id.as_ref()),
+            ("nft", self.nft_contract_id.as_ref()),
+        ]
     }
 }
 

@@ -14,6 +14,7 @@ pub mod blocking;
 pub mod client;
 pub mod config;
 pub mod errors;
+pub mod ingestion;
 mod network;
 #[cfg(test)]
 mod tests;
@@ -23,6 +24,12 @@ pub use blocking::XlmNsBlockingClient;
 pub use client::{XlmNsClient, XlmNsClientBuilder};
 pub use config::{ClientConfig, NetworkPreset, RetryConfig, DEFAULT_TRANSACTION_POLL_TIMEOUT};
 pub use errors::SdkError;
+pub use ingestion::{
+    decode_ledger_close_meta_xdr, read_length_prefixed_frame, CaptiveCoreBackend,
+    CaptiveCoreConfig, CaptiveCoreIngestor, CaptiveCoreOutputTarget, IngestedLedger,
+    IngestionSource, RemoteLedgerSource, RpcLedgerCloseMetaRemoteSource, RpcLedgersRemoteSource,
+    SupervisorStatus, TokioCaptiveCoreBackend,
+};
 pub use types::{
     RegisterResult, RegistrationReceipt, RenewResult, RenewalReceipt, SimulationResult,
 };

@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod error;
 mod export;
 mod output;
 mod signer;
@@ -7,10 +8,11 @@ mod signer;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use clap_complete::Shell;
-use config::{load_config, ContractKind, ContractOverrides, Network, ResolveOptions};
-use output::OutputFormat;
-use signer::{load_profile, SignerProfile};
+use commands::completions::CompletionCommand;
+use commands::watch::WatchCommand;
+use config::{ContractKind, ContractOverrides, Network, ResolveOptions, load_config};
+use output::{configure as configure_output, print_human_err, OutputFormat};
+use signer::{SignerProfile, load_profile};
 use std::path::PathBuf;
 use std::process;
 
@@ -19,10 +21,13 @@ const BIN_NAME: &str = "xlm-ns";
 #[derive(Parser)]
 #[command(name = BIN_NAME)]
 #[command(about = "XLM Name Service CLI", long_about = None)]
+#[command(
+    after_help = "Shell completions:\n  xlm-ns completions bash > ~/.local/share/bash-completion/completions/xlm-ns\n  xlm-ns completions zsh > ~/.local/share/zsh/site-functions/_xlm-ns\n  xlm-ns completions fish > ~/.config/fish/completions/xlm-ns.fish\n  xlm-ns completions install\n"
+)]
 struct Cli {
     /// Network to use (`testnet` or `mainnet`)
-    #[arg(short, long, default_value = "testnet", global = true)]
-    network: String,
+    #[arg(short, long, value_enum, default_value_t = Network::Testnet, global = true)]
+    network: Network,
 
     /// Config file path. Falls back to `XLM_NS_CONFIG`, then the documented search path.
     #[arg(long, global = true)]
@@ -31,6 +36,10 @@ struct Cli {
     /// Output format. Use 'json' or 'csv' for machine-readable export suitable for piping or automation.
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, global = true)]
     output: OutputFormat,
+
+    /// Disable terminal colors and progress indicators.
+    #[arg(long, global = true)]
+    no_color: bool,
 
     /// Simulate the transaction without submitting it
     #[arg(long, global = true)]
@@ -68,6 +77,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
+
 
 #[derive(Subcommand)]
 enum MigrateCommands {
@@ -137,6 +147,9 @@ enum MigrateCommands {
 }
 
 #[derive(Subcommand)]
+
+#[derive(Subcommand, Clone)]
+
 enum Commands {
 
     /// Migrate Soroban contract storage safely (transform/verify; export/import stubbed)
@@ -148,9 +161,12 @@ enum Commands {
     /// Register a new name.
     Register {
         /// Name to register
-        name: String,
+        name: Option<String>,
         /// Owner address
-        owner: String,
+        owner: Option<String>,
+        /// Launch the guided registration flow.
+        #[arg(long)]
+        interactive: bool,
         /// Signer profile to use for submission
         #[arg(long)]
         signer: Option<String>,
@@ -194,11 +210,11 @@ enum Commands {
     #[command(subcommand)]
     Auction(AuctionCommands),
     /// Generate a shell completion script.
-    Completions {
-        /// Target shell
-        #[arg(value_enum)]
-        shell: Shell,
-    },
+    #[command(
+        subcommand,
+        long_about = "Generate or install shell completions for bash, zsh, and fish.\n\nUse `xlm-ns completions bash|zsh|fish` to print a completion script to stdout.\nUse `xlm-ns completions install` to install into the standard per-shell user directory."
+    )]
+    Completions(CompletionCommand),
     /// Bridge management commands.
     #[command(subcommand)]
     Bridge(BridgeCommands),
@@ -211,6 +227,9 @@ enum Commands {
     /// Manage configuration files and validation.
     #[command(subcommand)]
     Config(ConfigCommands),
+    /// Watch for name expirations
+    #[command(subcommand)]
+    Watch(WatchCommand),
     /// Show registration details for a single name.
     Whois {
         /// Name to inspect
@@ -220,6 +239,15 @@ enum Commands {
     Portfolio {
         /// Owner address to inspect
         owner: String,
+        /// Number of names to fetch per RPC request.
+        #[arg(long = "batch-size", default_value_t = 50)]
+        batch_size: usize,
+        /// Maximum number of names to return.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Fetch a single 1-based page instead of the whole portfolio.
+        #[arg(long)]
+        page: Option<usize>,
     },
     /// Fetch a registration price quote without submitting a transaction (read-only).
     ///
@@ -232,6 +260,9 @@ enum Commands {
         #[arg(default_value_t = 1)]
         years: u32,
     },
+    /// Perform bulk operations from a file.
+    #[command(subcommand)]
+    Bulk(BulkCommands),
     /// Check whether a name is available for registration (read-only).
     ///
     /// Outputs the availability status: available, active, grace-period, or claimable.
@@ -247,7 +278,23 @@ enum Commands {
     Healthcheck,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
+pub enum BulkCommands {
+    /// Bulk register names from a file.
+    Register {
+        /// Path to the file containing the names to register.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Bulk renew names from a file.
+    Renew {
+        /// Path to the file containing the names to renew.
+        #[arg(long)]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Clone)]
 enum AuctionCommands {
     /// Create a new auction for a name
     Create {
@@ -306,7 +353,7 @@ enum AuctionCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum SubdomainCommands {
     /// Register a parent domain for subdomain management
     /// This enables the parent domain owner to create and manage subdomains
@@ -344,7 +391,7 @@ enum SubdomainCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum BridgeCommands {
     /// Register a bridge route for a supported chain
     Register {
@@ -367,13 +414,13 @@ enum BridgeCommands {
     TestVectors,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum NftCommands {
     /// Inspect the owner and metadata for a token id.
     Inspect { token_id: String },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum ConfigCommands {
     /// Create a config file template.
     Init {
@@ -381,8 +428,8 @@ enum ConfigCommands {
         #[arg(long)]
         path: Option<PathBuf>,
         /// Network profile to render into the template.
-        #[arg(long, default_value = "testnet")]
-        network: String,
+        #[arg(long, value_enum, default_value_t = Network::Testnet)]
+        network: Network,
         /// Overwrite an existing file.
         #[arg(long)]
         force: bool,
@@ -393,8 +440,8 @@ enum ConfigCommands {
         #[arg(long)]
         path: Option<PathBuf>,
         /// Network profile to render when creating a new file.
-        #[arg(long, default_value = "testnet")]
-        network: String,
+        #[arg(long, value_enum, default_value_t = Network::Testnet)]
+        network: Network,
     },
     /// Validate a config file without invoking any contract RPCs.
     Validate {
@@ -402,12 +449,24 @@ enum ConfigCommands {
         #[arg(long)]
         path: Option<PathBuf>,
         /// Network to validate against.
-        #[arg(long, default_value = "testnet")]
-        network: String,
+        #[arg(long, value_enum, default_value_t = Network::Testnet)]
+        network: Network,
+        /// Interactively prompt to correct invalid values.
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Show the current configuration.
+    Show {
+        /// Config file path. Falls back to the configured search path.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Network to show the configuration for.
+        #[arg(long, value_enum, default_value_t = Network::Testnet)]
+        network: Network,
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum TextCommand {
 
     /// Read a text record value for a name.
@@ -434,14 +493,14 @@ fn resolve_signer(name: Option<String>) -> anyhow::Result<Option<SignerProfile>>
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    configure_output(cli.no_color);
 
-    if let Commands::Completions { shell } = cli.command {
-        commands::completions::run_completions::<Cli>(shell, BIN_NAME);
+    if let Commands::Completions(command) = cli.command.clone() {
+        commands::completions::run_completion_command::<Cli>(command, BIN_NAME)?;
         return Ok(());
     }
 
-    let network = Network::parse(&cli.network)
-        .with_context(|| format!("invalid network '{}'", cli.network))?;
+    let network = cli.network;
 
     let contract_overrides = ContractOverrides {
 
@@ -468,6 +527,7 @@ async fn run() -> anyhow::Result<()> {
     if let Err(err) = validate_contract_policy(&cli.command, &contract_overrides, &config) {
         return Err(anyhow::anyhow!(err));
     }
+
 
     match cli.command {
         Commands::Migrate { command } => match command {
@@ -529,38 +589,73 @@ async fn run() -> anyhow::Result<()> {
                 commands::migrate::run_import(cli.output, cli.dry_run, contract_id, file).await
             }
         },
+
+    match cli.command.clone() {
         Commands::Register {
 
             name,
             owner,
+            interactive,
             signer,
-        } => commands::register::run_register(config, &name, &owner, resolve_signer(signer)?).await,
-        Commands::Resolve { name } => commands::resolve::run_resolve(config, &name).await,
+        } => {
+            commands::register::run_register(
+                config,
+                cli.output,
+                &name,
+                &owner,
+                resolve_signer(signer)?,
+            )
+            .await
+        }
+        Commands::Resolve { name } => {
+            commands::resolve::run_resolve(config, cli.output, &name).await
+        }
         Commands::ReverseResolve { address } => {
-            commands::reverse::run_reverse(config, &address).await
+            commands::reverse::run_reverse(config, cli.output, &address).await
         }
         Commands::Text(sub) => match sub {
-            TextCommand::Get { name, key } => commands::text::run_get(config, &name, &key).await,
+            TextCommand::Get { name, key } => {
+                commands::text::run_get(config, cli.output, &name, &key).await
+            }
             TextCommand::Set {
                 name,
                 key,
                 value,
                 signer,
-            } => commands::text::run_set(config, &name, &key, value, resolve_signer(signer)?).await,
+            } => {
+                commands::text::run_set(
+                    config,
+                    cli.output,
+                    &name,
+                    &key,
+                    value,
+                    resolve_signer(signer)?,
+                )
+                .await
+            }
         },
         Commands::Transfer {
             name,
             new_owner,
             signer,
         } => {
-            commands::transfer::run_transfer(config, &name, &new_owner, resolve_signer(signer)?)
-                .await
+            commands::transfer::run_transfer(
+                config,
+                cli.output,
+                &name,
+                &new_owner,
+                resolve_signer(signer)?,
+            )
+            .await
         }
         Commands::Renew {
             name,
             years,
             signer,
-        } => commands::renew::run_renew(config, &name, years, resolve_signer(signer)?).await,
+        } => {
+            commands::renew::run_renew(config, cli.output, &name, years, resolve_signer(signer)?)
+                .await
+        }
         Commands::Auction(sub) => match sub {
             AuctionCommands::Create {
                 name,
@@ -570,6 +665,7 @@ async fn run() -> anyhow::Result<()> {
             } => {
                 commands::auction::run_create(
                     config,
+                    cli.output,
                     &name,
                     reserve,
                     duration,
@@ -581,12 +677,27 @@ async fn run() -> anyhow::Result<()> {
                 name,
                 amount,
                 signer,
-            } => commands::auction::run_bid(config, &name, amount, resolve_signer(signer)?).await,
+            } => {
+                commands::auction::run_bid(
+                    config,
+                    cli.output,
+                    &name,
+                    amount,
+                    resolve_signer(signer)?,
+                )
+                .await
+            }
             AuctionCommands::Inspect { name } => {
                 commands::auction::run_inspect(config, &name).await
             }
             AuctionCommands::Settle { name, signer } => {
-                commands::auction::run_settle(config, &name, resolve_signer(signer)?).await
+                commands::auction::run_settle(
+                    config,
+                    cli.output,
+                    &name,
+                    resolve_signer(signer)?,
+                )
+                .await
             }
             AuctionCommands::Export { .. } | AuctionCommands::Import { .. } => Err(
                 anyhow::anyhow!("auction text import/export is not implemented"),
@@ -594,13 +705,13 @@ async fn run() -> anyhow::Result<()> {
         },
         Commands::Bridge(command) => match command {
             BridgeCommands::Register { chain } => {
-                commands::bridge::run_register_chain(config, &chain).await
+                commands::bridge::run_register_chain(config, cli.output, &chain).await
             }
             BridgeCommands::Inspect { chain } => {
                 commands::bridge::run_inspect_route(config, &chain).await
             }
             BridgeCommands::Payload { name, chain } => {
-                commands::bridge::run_generate_payload(config, &name, &chain).await
+                commands::bridge::run_generate_payload(config, cli.output, &name, &chain).await
             }
             BridgeCommands::TestVectors => Err(anyhow::anyhow!(
                 "bridge test vector export is not implemented"
@@ -608,18 +719,39 @@ async fn run() -> anyhow::Result<()> {
         },
         Commands::Subdomain(command) => match command {
             SubdomainCommands::RegisterParent { parent, owner } => {
-                commands::subdomain::run_register_parent(config, &parent, &owner).await
+                commands::subdomain::run_register_parent(config, cli.output, &parent, &owner).await
             }
             SubdomainCommands::AddController { parent, controller } => {
-                commands::subdomain::run_add_controller(config, &parent, &controller).await
+                commands::subdomain::run_add_controller(
+                    config,
+                    cli.output,
+                    &parent,
+                    &controller,
+                )
+                .await
             }
             SubdomainCommands::Create {
                 label,
                 parent,
                 owner,
-            } => commands::subdomain::run_create_subdomain(config, &label, &parent, &owner).await,
+            } => {
+                commands::subdomain::run_create_subdomain(
+                    config,
+                    cli.output,
+                    &label,
+                    &parent,
+                    &owner,
+                )
+                .await
+            }
             SubdomainCommands::Transfer { fqdn, new_owner } => {
-                commands::subdomain::run_transfer_subdomain(config, &fqdn, &new_owner).await
+                commands::subdomain::run_transfer_subdomain(
+                    config,
+                    cli.output,
+                    &fqdn,
+                    &new_owner,
+                )
+                .await
             }
         },
         Commands::Nft(command) => match command {
@@ -632,18 +764,36 @@ async fn run() -> anyhow::Result<()> {
                 path,
                 network,
                 force,
-            } => commands::config::run_init(path.or(cli.config.clone()), &network, force).await,
+            } => commands::config::run_init(path.or(cli.config.clone()), network, force).await,
             ConfigCommands::Edit { path, network } => {
-                commands::config::run_edit(path.or(cli.config.clone()), &network).await
+                commands::config::run_edit(path.or(cli.config.clone()), network).await
             }
-            ConfigCommands::Validate { path, network } => {
-                commands::config::run_validate(path.or(cli.config.clone()), &network, cli.output)
-                    .await
+            ConfigCommands::Validate { path, network, fix } => {
+                commands::config::run_validate(
+                    path.or(cli.config.clone()),
+                    network,
+                    cli.output,
+                    fix,
+                )
+                .await
+            }
+            ConfigCommands::Show { path, network } => {
+                commands::config::run_show(path.or(cli.config.clone()), network, cli.output).await
             }
         },
         Commands::Whois { name } => commands::whois::run_whois(config, cli.output, &name).await,
-        Commands::Portfolio { owner } => {
-            commands::portfolio::run_portfolio(config, cli.output, &owner).await
+        Commands::Portfolio {
+            owner,
+            batch_size,
+            limit,
+            page,
+        } => {
+            let options = commands::portfolio::PortfolioOptions {
+                batch_size,
+                limit,
+                page,
+            };
+            commands::portfolio::run_portfolio(config, cli.output, &owner, options).await
         }
         Commands::Quote { name, years } => {
             commands::quote::run_quote(config, cli.output, &name, years).await
@@ -652,15 +802,190 @@ async fn run() -> anyhow::Result<()> {
             commands::quote::run_availability(config, cli.output, &name).await
         }
         Commands::Healthcheck => commands::healthcheck::run_healthcheck(config, cli.output).await,
-        Commands::Completions { .. } => unreachable!("handled above"),
+        Commands::Bulk(sub) => match sub {
+            BulkCommands::Register { file } => {
+                commands::bulk::run_bulk_register(config, &file, cli.dry_run).await
+            }
+            BulkCommands::Renew { file } => {
+                commands::bulk::run_bulk_renew(config, &file, cli.dry_run).await
+            }
+        },
+        Commands::Completions(_) => unreachable!("handled above"),
+        Commands::Watch(sub) => commands::watch::run(config, sub).await,
     }
 }
 
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("Error: {:?}", e);
+        print_human_err(&format!("Error: {:?}", e));
         process::exit(1);
+    }
+}
+
+fn error_context(command: &Commands) -> error::ErrorContext {
+    match command {
+        Commands::Register { name, .. } => error::ErrorContext {
+            domain: error::ErrorDomain::Registrar,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "register",
+        },
+        Commands::Resolve { name } => error::ErrorContext {
+            domain: error::ErrorDomain::Resolver,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "resolve",
+        },
+        Commands::ReverseResolve { address } => error::ErrorContext {
+            domain: error::ErrorDomain::Resolver,
+            subject: Some(address.clone()),
+            subject_kind: error::SubjectKind::Address,
+            command: "reverse-resolve",
+        },
+        Commands::Text(sub) => match sub {
+            TextCommand::Get { name, .. } | TextCommand::Set { name, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Resolver,
+                subject: Some(name.clone()),
+                subject_kind: error::SubjectKind::Name,
+                command: "text",
+            },
+        },
+        Commands::Transfer { name, .. } => error::ErrorContext {
+            domain: error::ErrorDomain::Registry,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "transfer",
+        },
+        Commands::Renew { name, .. } => error::ErrorContext {
+            domain: error::ErrorDomain::Registrar,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "renew",
+        },
+        Commands::Auction(sub) => match sub {
+            AuctionCommands::Create { name, .. }
+            | AuctionCommands::Bid { name, .. }
+            | AuctionCommands::Inspect { name }
+            | AuctionCommands::Settle { name, .. }
+            | AuctionCommands::Export { name, .. }
+            | AuctionCommands::Import { name, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Auction,
+                subject: Some(name.clone()),
+                subject_kind: error::SubjectKind::Name,
+                command: "auction",
+            },
+        },
+        Commands::Bridge(sub) => match sub {
+            BridgeCommands::Register { chain }
+            | BridgeCommands::Inspect { chain }
+            | BridgeCommands::Payload { chain, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Bridge,
+                subject: Some(chain.clone()),
+                subject_kind: error::SubjectKind::Chain,
+                command: "bridge",
+            },
+            BridgeCommands::TestVectors => error::ErrorContext {
+                domain: error::ErrorDomain::Bridge,
+                subject: None,
+                subject_kind: error::SubjectKind::Unknown,
+                command: "bridge",
+            },
+        },
+        Commands::Subdomain(sub) => match sub {
+            SubdomainCommands::RegisterParent { parent, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Subdomain,
+                subject: Some(parent.clone()),
+                subject_kind: error::SubjectKind::Name,
+                command: "subdomain",
+            },
+            SubdomainCommands::AddController { parent, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Subdomain,
+                subject: Some(parent.clone()),
+                subject_kind: error::SubjectKind::Name,
+                command: "subdomain",
+            },
+            SubdomainCommands::Create { label, parent, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Subdomain,
+                subject: Some(format!("{label}.{parent}")),
+                subject_kind: error::SubjectKind::Name,
+                command: "subdomain",
+            },
+            SubdomainCommands::Transfer { fqdn, .. } => error::ErrorContext {
+                domain: error::ErrorDomain::Subdomain,
+                subject: Some(fqdn.clone()),
+                subject_kind: error::SubjectKind::Name,
+                command: "subdomain",
+            },
+        },
+        Commands::Nft(NftCommands::Inspect { token_id }) => error::ErrorContext {
+            domain: error::ErrorDomain::Nft,
+            subject: Some(token_id.clone()),
+            subject_kind: error::SubjectKind::TokenId,
+            command: "nft",
+        },
+        Commands::Config(_) => error::ErrorContext {
+            domain: error::ErrorDomain::General,
+            subject: None,
+            subject_kind: error::SubjectKind::Unknown,
+            command: "config",
+        },
+        Commands::Watch(_) => error::ErrorContext {
+            domain: error::ErrorDomain::Registry,
+            subject: None,
+            subject_kind: error::SubjectKind::Unknown,
+            command: "watch",
+        },
+        Commands::Whois { name } => error::ErrorContext {
+            domain: error::ErrorDomain::Registry,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "whois",
+        },
+        Commands::Portfolio { owner, .. } => error::ErrorContext {
+            domain: error::ErrorDomain::Registry,
+            subject: Some(owner.clone()),
+            subject_kind: error::SubjectKind::Address,
+            command: "portfolio",
+        },
+        Commands::Quote { name, .. } => error::ErrorContext {
+            domain: error::ErrorDomain::Registrar,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "quote",
+        },
+        Commands::Bulk(sub) => match sub {
+            BulkCommands::Register { file } => error::ErrorContext {
+                domain: error::ErrorDomain::Registrar,
+                subject: Some(file.display().to_string()),
+                subject_kind: error::SubjectKind::File,
+                command: "bulk register",
+            },
+            BulkCommands::Renew { file } => error::ErrorContext {
+                domain: error::ErrorDomain::Registrar,
+                subject: Some(file.display().to_string()),
+                subject_kind: error::SubjectKind::File,
+                command: "bulk renew",
+            },
+        },
+        Commands::Availability { name } => error::ErrorContext {
+            domain: error::ErrorDomain::Registry,
+            subject: Some(name.clone()),
+            subject_kind: error::SubjectKind::Name,
+            command: "availability",
+        },
+        Commands::Healthcheck => error::ErrorContext {
+            domain: error::ErrorDomain::General,
+            subject: None,
+            subject_kind: error::SubjectKind::Unknown,
+            command: "healthcheck",
+        },
+        Commands::Completions(_) => error::ErrorContext {
+            domain: error::ErrorDomain::General,
+            subject: None,
+            subject_kind: error::SubjectKind::Unknown,
+            command: "completions",
+        },
     }
 }
 
@@ -706,8 +1031,9 @@ mod tests {
     #[test]
     fn register_rejects_irrelevant_resolver_flag() {
         let cmd = Commands::Register {
-            name: "test.xlm".to_string(),
-            owner: "GDRA111".to_string(),
+            name: Some("test.xlm".to_string()),
+            owner: Some("GDRA111".to_string()),
+            interactive: false,
             signer: None,
         };
         let overrides = ContractOverrides {
@@ -727,8 +1053,9 @@ mod tests {
     #[test]
     fn register_rejects_irrelevant_registry_flag() {
         let cmd = Commands::Register {
-            name: "test.xlm".to_string(),
-            owner: "GDRA111".to_string(),
+            name: Some("test.xlm".to_string()),
+            owner: Some("GDRA111".to_string()),
+            interactive: false,
             signer: None,
         };
         let overrides = ContractOverrides {
@@ -747,8 +1074,9 @@ mod tests {
     #[test]
     fn register_fails_when_registrar_is_missing() {
         let cmd = Commands::Register {
-            name: "test.xlm".to_string(),
-            owner: "GDRA111".to_string(),
+            name: Some("test.xlm".to_string()),
+            owner: Some("GDRA111".to_string()),
+            interactive: false,
             signer: None,
         };
         let result = validate_contract_policy(
@@ -767,8 +1095,9 @@ mod tests {
     #[test]
     fn register_passes_with_only_registrar_flag() {
         let cmd = Commands::Register {
-            name: "test.xlm".to_string(),
-            owner: "GDRA111".to_string(),
+            name: Some("test.xlm".to_string()),
+            owner: Some("GDRA111".to_string()),
+            interactive: false,
             signer: None,
         };
         let overrides = ContractOverrides {
@@ -993,7 +1322,7 @@ fn validate_contract_policy(
             &[ContractKind::Auction],
             &[ContractKind::Auction],
         ),
-        Commands::Completions { .. } => ("completions", &[], &[]),
+        Commands::Completions(_) => ("completions", &[], &[]),
         Commands::Bridge(_) => ("bridge", &[ContractKind::Bridge], &[ContractKind::Bridge]),
         Commands::Subdomain(_) => (
             "subdomain",
@@ -1002,6 +1331,7 @@ fn validate_contract_policy(
         ),
         Commands::Nft(_) => ("nft", &[ContractKind::Nft], &[ContractKind::Nft]),
         Commands::Config(_) => ("config", &[], &[]),
+        Commands::Watch(_) => ("watch", &[ContractKind::Registry], &[]),
         Commands::Whois { .. } => (
             "whois",
             &[ContractKind::Registry, ContractKind::Resolver],
@@ -1037,6 +1367,18 @@ fn validate_contract_policy(
             ],
             &[],
         ),
+        Commands::Bulk(sub) => match sub {
+            BulkCommands::Register { .. } => (
+                "bulk register",
+                &[ContractKind::Registrar],
+                &[ContractKind::Registrar],
+            ),
+            BulkCommands::Renew { .. } => (
+                "bulk renew",
+                &[ContractKind::Registrar],
+                &[ContractKind::Registrar],
+            ),
+        },
     };
 
     for kind in overrides.provided_kinds() {

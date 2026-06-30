@@ -1,3 +1,6 @@
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
+extern crate alloc;
+
 pub mod constants;
 pub mod errors;
 pub mod soroban;
@@ -12,10 +15,11 @@ pub use constants::{
 };
 pub use errors::CommonError;
 pub use time::{
-    expiry_from_now, grace_period_ends_at, is_active_at, is_claimable_at, is_time_window_open,
-    within_grace_period,
+    expiry_from_now, grace_period_ends_at, grace_period_ends_at_with_duration, is_active_at,
+    is_claimable_at, is_time_window_open, within_grace_period,
 };
 #[cfg(feature = "soroban")]
+pub use soroban::validate_label_bytes;
 pub use types::RegistryEntry;
 pub use types::{NameHash, NameRecord, Tld};
 pub use validation::{

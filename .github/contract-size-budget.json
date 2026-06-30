@@ -1,0 +1,9 @@
+[
+  { "name": "xlm_ns_registry", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_registrar", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_resolver", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_auction", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_subdomain", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_nft", "max_size_bytes": 65536 },
+  { "name": "xlm_ns_bridge", "max_size_bytes": 65536 }
+]

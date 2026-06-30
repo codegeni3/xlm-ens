@@ -1,7 +1,9 @@
+#![cfg_attr(not(test), no_std)]
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, String, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, Bytes, BytesN, Env, String, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::time::is_time_window_open;
@@ -44,6 +46,9 @@ enum DataKey {
     /// Append-only index of created auction names, enabling discovery queries
     /// (#157) without callers needing to know storage keys.
     AuctionNames,
+    Admin,
+    ContractVersion,
+    ReentrancyLock,
 }
 
 /// Bounded result window for auction discovery queries (#157).
@@ -62,9 +67,26 @@ pub enum AuctionError {
     AuctionNotEnded = 6,
     AlreadySettled = 7,
     InvalidBid = 8,
+    UpgradeFailed = 9,
+    ReentrancyDetected = 10,
 }
 
 pub const CONTRACT_VERSION: u32 = 1;
+
+#[contractevent]
+pub struct ContractUpgraded {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub admin: Address,
+}
+
+#[contractevent]
+#[contracttype]
+pub struct AuctionCancelled {
+    pub name: String,
+    pub admin: Address,
+    pub reason: String,
+}
 
 #[contract]
 pub struct AuctionContract;
@@ -73,6 +95,63 @@ pub struct AuctionContract;
 impl AuctionContract {
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
+    }
+
+    pub fn initialize(env: Env, admin: Address) -> Result<(), AuctionError> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(AuctionError::AlreadyExists);
+        }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CONTRACT_VERSION);
+        Ok(())
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(CONTRACT_VERSION)
+    }
+
+    pub fn upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+        migration_data: Bytes,
+    ) -> Result<(), AuctionError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(AuctionError::UpgradeFailed)?;
+        admin.require_auth();
+
+        let current_version = Self::get_version(env.clone());
+        let target_version = decode_target_version(&migration_data);
+
+        for v in current_version..target_version {
+            migrate(v, v + 1, &migration_data);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &target_version);
+
+        env.events().publish(
+            (symbol_short!("auction"), symbol_short!("upgraded")),
+            (current_version, target_version, admin),
+        );
+        ContractUpgraded {
+            old_version: current_version,
+            new_version: target_version,
+            admin,
+        }
+        .publish(&env);
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        Ok(())
     }
 
     pub fn create_auction(
@@ -84,6 +163,12 @@ impl AuctionContract {
         starts_at: u64,
         ends_at: u64,
     ) -> Result<(), AuctionError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(AuctionError::Unauthorized)?;
+        admin.require_auth();
         validate_fqdn_soroban(&name).map_err(|_| AuctionError::Validation)?;
         let key = DataKey::Auction(name.clone());
         if env.storage().persistent().has(&key) {
@@ -177,35 +262,37 @@ impl AuctionContract {
         amount: u64,
         now_unix: u64,
     ) -> Result<(), AuctionError> {
-        bidder.require_auth();
-        if amount == 0 {
-            return Err(AuctionError::InvalidBid);
-        }
-        let mut auction = get_auction(&env, &name)?;
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Settlement(name.clone()))
-        {
-            return Err(AuctionError::AlreadySettled);
-        }
-        if !is_time_window_open(now_unix, auction.starts_at, auction.ends_at) {
-            if now_unix < auction.starts_at {
-                return Err(AuctionError::AuctionNotStarted);
+        with_reentrancy_lock(&env, || {
+            bidder.require_auth();
+            if amount == 0 {
+                return Err(AuctionError::InvalidBid);
             }
-            return Err(AuctionError::AuctionClosed);
-        }
+            let mut auction = get_auction(&env, &name)?;
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::Settlement(name.clone()))
+            {
+                return Err(AuctionError::AlreadySettled);
+            }
+            if !is_time_window_open(now_unix, auction.starts_at, auction.ends_at) {
+                if now_unix < auction.starts_at {
+                    return Err(AuctionError::AuctionNotStarted);
+                }
+                return Err(AuctionError::AuctionClosed);
+            }
 
-        let token = token::Client::new(&env, &auction.asset);
-        token.transfer(&bidder, &env.current_contract_address(), &(amount as i128));
+            let token = token::Client::new(&env, &auction.asset);
+            token.transfer(&bidder, &env.current_contract_address(), &(amount as i128));
 
-        auction.bids.push_back(Bid {
-            bidder,
-            amount,
-            placed_at: now_unix,
-        });
-        put_auction(&env, &name, &auction);
-        Ok(())
+            auction.bids.push_back(Bid {
+                bidder,
+                amount,
+                placed_at: now_unix,
+            });
+            put_auction(&env, &name, &auction);
+            Ok(())
+        })
     }
 
     pub fn settle(
@@ -396,6 +483,40 @@ fn put_auction(env: &Env, name: &String, auction: &Auction) {
     env.storage()
         .persistent()
         .set(&DataKey::Auction(name.clone()), auction);
+}
+
+fn migrate(from_version: u32, to_version: u32, _data: &Bytes) {
+    let _ = (from_version, to_version);
+}
+
+fn decode_target_version(data: &Bytes) -> u32 {
+    if data.len() < 4 {
+        return CONTRACT_VERSION + 1;
+    }
+    let b0 = data.get(0).unwrap_or(0);
+    let b1 = data.get(1).unwrap_or(0);
+    let b2 = data.get(2).unwrap_or(0);
+    let b3 = data.get(3).unwrap_or(0);
+    u32::from_be_bytes([b0, b1, b2, b3])
+}
+
+fn with_reentrancy_lock<R, F>(env: &Env, f: F) -> Result<R, AuctionError>
+where
+    F: FnOnce() -> Result<R, AuctionError>,
+{
+    if env
+        .storage()
+        .instance()
+        .get::<_, bool>(&DataKey::ReentrancyLock)
+        .unwrap_or(false)
+    {
+        return Err(AuctionError::ReentrancyDetected);
+    }
+
+    env.storage().instance().set(&DataKey::ReentrancyLock, &true);
+    let result = f();
+    env.storage().instance().set(&DataKey::ReentrancyLock, &false);
+    result
 }
 
 fn settle_vickrey(auction: &Auction, settled_at: u64) -> Option<Settlement> {

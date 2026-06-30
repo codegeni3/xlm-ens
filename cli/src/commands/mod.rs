@@ -1,5 +1,6 @@
 pub mod auction;
 pub mod bridge;
+pub mod bulk;
 pub mod completions;
 pub mod config;
 pub mod healthcheck;
@@ -13,6 +14,8 @@ pub mod reverse;
 pub mod subdomain;
 pub mod text;
 pub mod transfer;
+pub mod validate;
+pub mod watch;
 pub mod whois;
 pub mod migrate;
 

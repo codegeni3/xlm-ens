@@ -5,7 +5,7 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
-xlm-ns-common = { path = "../xlm-ns-common" }
+xlm-ns-common = { path = "../xlm-ns-common", features = ["std"] }
 stellar-rpc-client = "23.1.0"
 stellar-xdr = "23.0.0"
 soroban-sdk = "23.1.0"
@@ -14,6 +14,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ed25519-dalek = "2"
 stellar-strkey = "0.0.13"
+async-trait = "0.1"
+tracing = "0.1"
+
+# Added for retry logic with exponential backoff
+rand = { version = "0.8", features = ["std", "std_rng"] }
 
 [dev-dependencies]
 wiremock = "0.6"
+tokio = { version = "1", features = ["test-util"] }

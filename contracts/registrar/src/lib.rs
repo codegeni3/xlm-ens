@@ -1,21 +1,42 @@
+#![cfg_attr(not(test), no_std)]
 pub mod expiry;
 pub mod pricing;
 mod test;
 
-use expiry::expiry_from_now;
+use expiry::{expiry_from_now, grace_period_ends_at_with_duration};
 use pricing::price_for_label_length;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal,
-    String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    Bytes, Env, IntoVal, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::{
     build_xlm_name, extract_label_soroban, validate_label_soroban,
     validate_registration_years_soroban,
 };
-use xlm_ns_common::time::grace_period_ends_at;
 pub use xlm_ns_common::GRACE_PERIOD_SECONDS;
 
+pub const DEFAULT_GRACE_PERIOD_SECONDS: u64 = GRACE_PERIOD_SECONDS;
+pub const MIN_GRACE_PERIOD_SECONDS: u64 = 86_400; // 1 day
+pub const QUOTE_VALIDITY_SECONDS: u64 = 300; // 5 minutes
+pub const MAX_GRACE_PERIOD_SECONDS: u64 = 31_536_000; // 365 days
+
+pub const DEFAULT_MIN_RENEWAL_YEARS: u64 = 1;
+pub const MAX_ALLOWED_RENEWAL_YEARS: u64 = 10;
+
 pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
+pub const CONTRACT_VERSION: u32 = 1;
+
+#[contractevent]
+#[contracttype]
+pub struct ContractUpgraded {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub admin: Address,
+}
+
+// Default rate limit: 5 registrations per 24 hours (86400 seconds)
+pub const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 86400;
+pub const DEFAULT_MAX_REGISTRATIONS_PER_WINDOW: u64 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -31,6 +52,7 @@ pub struct RegistrationQuote {
     pub fee_stroops: u64,
     pub expiry_unix: u64,
     pub grace_period_ends_at: u64,
+    pub valid_until: u64,
     pub pricing: PricingBreakdown,
 }
 
@@ -83,6 +105,13 @@ pub struct RegistrationRecord {
     pub renewed_at: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct RateLimitConfig {
+    pub window_size_seconds: u64,
+    pub max_registrations_per_window: u64,
+}
+
 #[derive(Clone)]
 #[contracttype]
 enum DataKey {
@@ -92,6 +121,12 @@ enum DataKey {
     Registry,
     RegistrationCount,
     RenewalCount,
+    RateLimitConfig,
+    GracePeriodSeconds,
+    WhitelistedAddress(Address),
+    RegistrationWindow(Address, u64),
+    Admin,
+    ContractVersion,
 }
 
 #[contracterror]
@@ -108,6 +143,9 @@ pub enum RegistrarError {
     RegistrationClaimable = 8,
     NotInitialized = 9,
     AlreadyInitialized = 10,
+    RateLimitExceeded = 11,
+    UpgradeFailed = 12,
+    QuoteExpired = 13,
 }
 
 #[contract]
@@ -115,11 +153,80 @@ pub struct RegistrarContract;
 
 #[contractimpl]
 impl RegistrarContract {
-    pub fn initialize(env: Env, registry: Address) -> Result<(), RegistrarError> {
+    pub fn initialize(env: Env, registry: Address, admin: Address) -> Result<(), RegistrarError> {
         if env.storage().instance().has(&DataKey::Registry) {
             return Err(RegistrarError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CONTRACT_VERSION);
+
+        // Initialize rate limit config with defaults if not already set
+        if !env.storage().persistent().has(&DataKey::RateLimitConfig) {
+            let config = RateLimitConfig {
+                window_size_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+                max_registrations_per_window: DEFAULT_MAX_REGISTRATIONS_PER_WINDOW,
+            };
+            env.storage()
+                .persistent()
+                .set(&DataKey::RateLimitConfig, &config);
+        }
+
+        if !env.storage().persistent().has(&DataKey::GracePeriodSeconds) {
+            env.storage()
+                .persistent()
+                .set(&DataKey::GracePeriodSeconds, &DEFAULT_GRACE_PERIOD_SECONDS);
+        }
+        Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(CONTRACT_VERSION)
+    }
+
+    pub fn upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+        migration_data: Bytes,
+    ) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::UpgradeFailed)?;
+        admin.require_auth();
+
+        let current_version = Self::get_version(env.clone());
+        let target_version = decode_target_version(&migration_data);
+
+        for v in current_version..target_version {
+            migrate(v, v + 1, &migration_data);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &target_version);
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("upgraded")),
+            ContractUpgraded {
+                old_version: current_version,
+                new_version: target_version,
+                admin,
+            },
+        );
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash.to_bytes());
+
         Ok(())
     }
 
@@ -127,6 +234,12 @@ impl RegistrarContract {
     // expiry-plus-grace lifecycle. This contract does not expose an admin
     // recovery or forced-release override.
     pub fn reserve_label(env: Env, label: String) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
         let key = DataKey::Reserved(label.clone());
         if env
@@ -146,6 +259,12 @@ impl RegistrarContract {
     }
 
     pub fn load_reserved_manifest(env: Env, labels: Vec<String>) -> Result<u32, RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
         let mut added_count = 0;
         for label in labels.iter() {
             if validate_label_soroban(&label).is_ok() {
@@ -179,14 +298,14 @@ impl RegistrarContract {
     }
 
     pub fn quote_registration(
-        _env: Env,
+        env: Env,
         label: String,
         years: u64,
         now_unix: u64,
     ) -> Result<RegistrationQuote, RegistrarError> {
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
         validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
-        Ok(build_quote(&label, years, now_unix))
+        Ok(build_quote(&env, &label, years, now_unix))
     }
 
     /// Issue #220: Read-only renewal quote for an existing registration.
@@ -222,7 +341,7 @@ impl RegistrarContract {
             fee_stroops: annual_fee.saturating_mul(years),
             current_expiry_unix: record.expires_at,
             extended_expiry_unix,
-            grace_period_ends_at: grace_period_ends_at(extended_expiry_unix),
+            grace_period_ends_at: compute_grace_period_ends_at(&env, extended_expiry_unix),
             pricing: PricingBreakdown {
                 annual_fee_stroops: annual_fee,
                 duration_years: years,
@@ -242,12 +361,17 @@ impl RegistrarContract {
         label: String,
         owner: Address,
         years: u64,
-        payment_stroops: u64,
+        max_price: u64,
         now_unix: u64,
     ) -> Result<(), RegistrarError> {
         owner.require_auth();
 
         validate_label_soroban(&label).map_err(|_| RegistrarError::Validation)?;
+
+        if now_unix > now_unix.saturating_add(QUOTE_VALIDITY_SECONDS) {
+            return Err(RegistrarError::QuoteExpired);
+        }
+
         validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
 
         if env
@@ -259,9 +383,16 @@ impl RegistrarContract {
             return Err(RegistrarError::Reserved);
         }
 
-        let quote = build_quote(&label, years, now_unix);
-        if payment_stroops < quote.fee_stroops {
+        // Check rate limit before proceeding with registration
+        check_rate_limit(&env, &owner, now_unix)?;
+
+        let quote = build_quote(&env, &label, years, now_unix);
+        if max_price < quote.fee_stroops {
             return Err(RegistrarError::InsufficientFee);
+        }
+
+        if now_unix > quote.valid_until {
+            return Err(RegistrarError::QuoteExpired);
         }
 
         let name = build_xlm_name(&env, &label).map_err(|_| RegistrarError::Validation)?;
@@ -281,12 +412,16 @@ impl RegistrarContract {
             registered_at: now_unix,
             expires_at: quote.expiry_unix,
             grace_period_ends_at: quote.grace_period_ends_at,
-            fee_paid: payment_stroops,
+            fee_paid: quote.fee_stroops,
             renewed_at: now_unix,
         };
         env.storage()
             .persistent()
             .set(&DataKey::Registration(name.clone()), &record);
+
+        // Record this registration for rate limit tracking
+        record_registration(&env, &owner, now_unix)?;
+
         let treasury = env
             .storage()
             .persistent()
@@ -294,7 +429,7 @@ impl RegistrarContract {
             .unwrap_or(0);
         env.storage().persistent().set(
             &DataKey::Treasury,
-            &treasury.saturating_add(payment_stroops),
+            &treasury.saturating_add(quote.fee_stroops),
         );
         let reg_count = env
             .storage()
@@ -331,7 +466,7 @@ impl RegistrarContract {
             (
                 label,
                 owner,
-                payment_stroops,
+                quote.fee_stroops,
                 record.expires_at,
                 record.grace_period_ends_at,
             ),
@@ -361,7 +496,7 @@ impl RegistrarContract {
         if record.owner != caller {
             return Err(RegistrarError::Unauthorized);
         }
-        match can_renew(record.expires_at, now_unix) {
+        match can_renew(record.grace_period_ends_at, now_unix) {
             Ok(true) => {}
             Ok(false) => return Err(RegistrarError::NotRenewable),
             Err(e) => return Err(e),
@@ -379,7 +514,7 @@ impl RegistrarContract {
         };
         let expires_at = expiry_from_now(base_time, years);
         record.expires_at = expires_at;
-        record.grace_period_ends_at = grace_period_ends_at(expires_at);
+        record.grace_period_ends_at = compute_grace_period_ends_at(&env, expires_at);
         record.renewed_at = now_unix;
         record.fee_paid = record.fee_paid.saturating_add(payment_stroops);
         env.storage()
@@ -540,16 +675,310 @@ impl RegistrarContract {
                 .unwrap_or(0),
         }
     }
+
+    /// Governance function: Set rate limit configuration
+    pub fn set_rate_limit_config(
+        env: Env,
+        window_size_seconds: u64,
+        max_registrations_per_window: u64,
+    ) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
+        let config = RateLimitConfig {
+            window_size_seconds,
+            max_registrations_per_window,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::RateLimitConfig, &config);
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("rate")),
+            (window_size_seconds, max_registrations_per_window),
+        );
+
+        Ok(())
+    }
+
+    /// Governance function: Get current rate limit configuration
+    pub fn get_rate_limit_config(env: Env) -> RateLimitConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RateLimitConfig)
+            .unwrap_or(RateLimitConfig {
+                window_size_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+                max_registrations_per_window: DEFAULT_MAX_REGISTRATIONS_PER_WINDOW,
+            })
+    }
+
+    /// Governance function: Set the post-expiry grace period duration.
+    ///
+    /// Affects grace calculations for new registrations and renewals. Existing
+    /// registrations keep their stored `grace_period_ends_at` timestamps.
+    pub fn set_grace_period(env: Env, grace_period_seconds: u64) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
+
+        if grace_period_seconds < MIN_GRACE_PERIOD_SECONDS
+            || grace_period_seconds > MAX_GRACE_PERIOD_SECONDS
+        {
+            return Err(RegistrarError::Validation);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::GracePeriodSeconds, &grace_period_seconds);
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("grace")),
+            grace_period_seconds,
+        );
+
+        Ok(())
+    }
+
+    /// Read-only accessor for the configured grace period duration in seconds.
+    pub fn get_grace_period(env: Env) -> u64 {
+        get_grace_period_seconds(&env)
+    }
+
+    /// Renew a name that has expired but is still within its grace period.
+    ///
+    /// Uses standard renewal pricing. Rejects renewals while the name is still
+    /// active or after the grace window has ended.
+    pub fn extend_during_grace(
+        env: Env,
+        name: String,
+        caller: Address,
+        years: u64,
+        payment_stroops: u64,
+        now_unix: u64,
+    ) -> Result<(), RegistrarError> {
+        caller.require_auth();
+
+        let label = extract_label_soroban(&env, &name).map_err(|_| RegistrarError::Validation)?;
+        validate_registration_years_soroban(years).map_err(|_| RegistrarError::Validation)?;
+
+        let record = env
+            .storage()
+            .persistent()
+            .get::<_, RegistrationRecord>(&DataKey::Registration(name.clone()))
+            .ok_or(RegistrarError::NotFound)?;
+
+        if record.owner != caller {
+            return Err(RegistrarError::Unauthorized);
+        }
+
+        if now_unix <= record.expires_at {
+            return Err(RegistrarError::NotRenewable);
+        }
+
+        if now_unix > record.grace_period_ends_at {
+            return Err(RegistrarError::RegistrationClaimable);
+        }
+
+        let fee_due = price_for_label_length(label.len() as usize).saturating_mul(years);
+        if payment_stroops < fee_due {
+            return Err(RegistrarError::InsufficientFee);
+        }
+
+        let expires_at = expiry_from_now(now_unix, years);
+        let mut record = record;
+        record.expires_at = expires_at;
+        record.grace_period_ends_at = compute_grace_period_ends_at(&env, expires_at);
+        record.renewed_at = now_unix;
+        record.fee_paid = record.fee_paid.saturating_add(payment_stroops);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Registration(name.clone()), &record);
+
+        let treasury = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::Treasury)
+            .unwrap_or(0);
+        env.storage().persistent().set(
+            &DataKey::Treasury,
+            &treasury.saturating_add(payment_stroops),
+        );
+        let renew_count = env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::RenewalCount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RenewalCount, &renew_count.saturating_add(1));
+
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Registry)
+            .ok_or(RegistrarError::NotInitialized)?;
+
+        env.invoke_contract::<()>(
+            &registry,
+            &Symbol::new(&env, "renew"),
+            (
+                name.clone(),
+                caller.clone(),
+                record.expires_at,
+                record.grace_period_ends_at,
+                now_unix,
+            )
+                .into_val(&env),
+        );
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("grrenew")),
+            (
+                name,
+                caller,
+                payment_stroops,
+                record.expires_at,
+                record.grace_period_ends_at,
+            ),
+        );
+
+        Ok(())
+    }
+
+    /// Governance function: Whitelist an address to bypass rate limiting
+    pub fn whitelist_address(env: Env, address: Address) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::WhitelistedAddress(address.clone()), &true);
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("wlist")),
+            address,
+        );
+
+        Ok(())
+    }
+
+    /// Governance function: Remove address from whitelist
+    pub fn remove_whitelist_address(env: Env, address: Address) -> Result<(), RegistrarError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistrarError::NotInitialized)?;
+        admin.require_auth();
+        let key = DataKey::WhitelistedAddress(address.clone());
+        env.storage().persistent().remove(&key);
+
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("unwlist")),
+            address,
+        );
+
+        Ok(())
+    }
+
+    /// Check if an address is whitelisted
+    pub fn is_whitelisted(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::WhitelistedAddress(address))
+            .unwrap_or(false)
+    }
+
+    /// Get rate limit status for an address (read-only)
+    pub fn get_registrations_in_window(env: Env, address: Address, now_unix: u64) -> u64 {
+        let config = Self::get_rate_limit_config(&env);
+        let window_start = now_unix.saturating_sub(config.window_size_seconds);
+        let key = DataKey::RegistrationWindow(address, window_start);
+        env.storage().persistent().get::<_, u64>(&key).unwrap_or(0)
+    }
 }
 
-fn build_quote(label: &String, years: u64, now_unix: u64) -> RegistrationQuote {
+/// Check if an address is within rate limits for a given time window
+fn check_rate_limit(env: &Env, address: &Address, now_unix: u64) -> Result<(), RegistrarError> {
+    // Check if address is whitelisted (bypass rate limit)
+    if env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&DataKey::WhitelistedAddress(address.clone()))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    // Get rate limit config
+    let config = env
+        .storage()
+        .persistent()
+        .get::<_, RateLimitConfig>(&DataKey::RateLimitConfig)
+        .unwrap_or(RateLimitConfig {
+            window_size_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+            max_registrations_per_window: DEFAULT_MAX_REGISTRATIONS_PER_WINDOW,
+        });
+
+    let window_start = now_unix.saturating_sub(config.window_size_seconds);
+    let key = DataKey::RegistrationWindow(address.clone(), window_start);
+
+    let count = env.storage().persistent().get::<_, u64>(&key).unwrap_or(0);
+
+    // Check if we've exceeded the limit
+    if count >= config.max_registrations_per_window {
+        env.events().publish(
+            (symbol_short!("registrar"), symbol_short!("limit")),
+            (address.clone(), count),
+        );
+        return Err(RegistrarError::RateLimitExceeded);
+    }
+
+    Ok(())
+}
+
+/// Record a registration for an address within the current window
+fn record_registration(env: &Env, address: &Address, now_unix: u64) -> Result<(), RegistrarError> {
+    // Get rate limit config
+    let config = env
+        .storage()
+        .persistent()
+        .get::<_, RateLimitConfig>(&DataKey::RateLimitConfig)
+        .unwrap_or(RateLimitConfig {
+            window_size_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+            max_registrations_per_window: DEFAULT_MAX_REGISTRATIONS_PER_WINDOW,
+        });
+
+    let window_start = now_unix.saturating_sub(config.window_size_seconds);
+    let key = DataKey::RegistrationWindow(address.clone(), window_start);
+
+    let count = env.storage().persistent().get::<_, u64>(&key).unwrap_or(0);
+
+    env.storage()
+        .persistent()
+        .set(&key, &count.saturating_add(1));
+
+    Ok(())
+}
+
+fn build_quote(env: &Env, label: &String, years: u64, now_unix: u64) -> RegistrationQuote {
     let annual_fee = price_for_label_length(label.len() as usize);
     let expiry_unix = expiry_from_now(now_unix, years);
 
     RegistrationQuote {
         fee_stroops: annual_fee.saturating_mul(years),
         expiry_unix,
-        grace_period_ends_at: grace_period_ends_at(expiry_unix),
+        grace_period_ends_at: compute_grace_period_ends_at(env, expiry_unix),
+        valid_until: now_unix.saturating_add(QUOTE_VALIDITY_SECONDS),
         pricing: PricingBreakdown {
             annual_fee_stroops: annual_fee,
             duration_years: years,
@@ -558,12 +987,36 @@ fn build_quote(label: &String, years: u64, now_unix: u64) -> RegistrationQuote {
     }
 }
 
-pub fn can_renew(expiry_unix: u64, now_unix: u64) -> Result<bool, RegistrarError> {
-    let grace_period_end = grace_period_ends_at(expiry_unix);
+fn get_grace_period_seconds(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::GracePeriodSeconds)
+        .unwrap_or(DEFAULT_GRACE_PERIOD_SECONDS)
+}
 
-    if now_unix > grace_period_end {
+fn compute_grace_period_ends_at(env: &Env, expiry_unix: u64) -> u64 {
+    grace_period_ends_at_with_duration(expiry_unix, get_grace_period_seconds(env))
+}
+
+pub fn can_renew(grace_period_ends_at: u64, now_unix: u64) -> Result<bool, RegistrarError> {
+    if now_unix > grace_period_ends_at {
         return Err(RegistrarError::RegistrationClaimable);
     }
 
     Ok(true)
+}
+
+fn migrate(from_version: u32, to_version: u32, _data: &Bytes) {
+    let _ = (from_version, to_version);
+}
+
+fn decode_target_version(data: &Bytes) -> u32 {
+    if data.len() < 4 {
+        return CONTRACT_VERSION + 1;
+    }
+    let b0 = data.get(0).unwrap_or(0);
+    let b1 = data.get(1).unwrap_or(0);
+    let b2 = data.get(2).unwrap_or(0);
+    let b3 = data.get(3).unwrap_or(0);
+    u32::from_be_bytes([b0, b1, b2, b3])
 }

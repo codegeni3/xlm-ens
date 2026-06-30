@@ -41,4 +41,4 @@ impl fmt::Display for CommonError {
     }
 }
 
-impl std::error::Error for CommonError {}
+impl core::error::Error for CommonError {}

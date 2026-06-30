@@ -1,7 +1,9 @@
+#![cfg_attr(not(test), no_std)]
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype,
+    symbol_short, Address, Bytes, Env, String, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::time::{is_active_at, is_claimable_at};
@@ -9,6 +11,33 @@ use xlm_ns_common::{DEFAULT_TTL_SECONDS, MAX_METADATA_URI_LENGTH};
 
 pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 1;
+
+#[contractevent]
+#[contracttype]
+pub struct ContractUpgraded {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub admin: Address,
+}
+
+#[contractevent]
+#[contracttype]
+pub struct LockApplied {
+    pub name: String,
+    pub locked_until: u64,
+    pub lock_reason: String,
+    pub admin: Address,
+}
+
+#[contractevent]
+#[contracttype]
+pub struct LockRemoved {
+    pub name: String,
+    pub locked_until: u64,
+    pub lock_reason: String,
+    pub admin: Address,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -54,7 +83,12 @@ pub enum NameState {
 #[contracttype]
 enum DataKey {
     Entry(String),
+    Lock(String),
     OwnerNames(Address),
+    Admin,
+    DisputeAdmin,
+    NftContract,
+    ContractVersion,
 }
 
 #[contracterror]
@@ -70,13 +104,115 @@ pub enum RegistryError {
     Validation = 7,
     InvalidExpiry = 8,
     InvalidGracePeriod = 9,
+    UpgradeFailed = 10,
+    Locked = 11,
 }
 
 #[contract]
 pub struct RegistryContract;
 
+// NFT contract client interface needed for cross-contract calls.
+#[contractclient(name = "NftClient")]
+pub trait Nft {
+    fn mint(env: Env, name: String, owner: Address, metadata_uri: Option<String>, expires_at: u64);
+    fn sync_owner(env: Env, name: String, new_owner: Address);
+    fn sync_expiry(env: Env, name: String, new_expiry: u64);
+    fn burn(env: Env, name: String);
+}
+
+#[contractclient(name = "ResolverClient")]
+pub trait Resolver {
+    fn clear_reverse_record(env: Env, name: String, previous_owner: Address);
+}
+
 #[contractimpl]
 impl RegistryContract {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), RegistryError> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(RegistryError::Unauthorized);
+        }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::DisputeAdmin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CONTRACT_VERSION);
+        Ok(())
+    }
+
+    pub fn version(_env: Env) -> u32 {
+        CONTRACT_VERSION
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(CONTRACT_VERSION)
+    }
+
+    pub fn set_nft_contract(env: Env, nft_contract: Address) -> Result<(), RegistryError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistryError::Unauthorized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::NftContract, &nft_contract);
+        Ok(())
+    }
+
+    pub fn set_dispute_admin(env: Env, dispute_admin: Address) -> Result<(), RegistryError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistryError::Unauthorized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeAdmin, &dispute_admin);
+        Ok(())
+    }
+
+    pub fn upgrade(
+        env: Env,
+        new_wasm_hash: Bytes,
+        migration_data: Bytes,
+    ) -> Result<(), RegistryError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(RegistryError::UpgradeFailed)?;
+        admin.require_auth();
+
+        let current_version = Self::get_version(env.clone());
+        let target_version = decode_target_version(&migration_data);
+
+        for v in current_version..target_version {
+            migrate(v, v + 1, &migration_data);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &target_version);
+
+        env.events().publish(
+            (symbol_short!("contract"), symbol_short!("upgraded")),
+            ContractUpgraded {
+                old_version: current_version,
+                new_version: target_version,
+                admin,
+            },
+        );
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        Ok(())
+    }
+
     // Mutating entrypoints require Soroban auth from the address that is
     // authorizing the state change, rather than relying on address equality
     // checks alone.
@@ -99,6 +235,7 @@ impl RegistryContract {
     ) -> Result<(), RegistryError> {
         owner.require_auth();
         validate_fqdn_soroban(&name).map_err(|_| RegistryError::Validation)?;
+        ensure_name_unlocked(&env, &name, now_unix)?;
         validate_metadata(&metadata_uri)?;
         validate_lifecycle_timestamps(now_unix, expires_at, grace_period_ends_at)?;
 
@@ -133,6 +270,11 @@ impl RegistryContract {
         };
         env.storage().persistent().set(&key, &entry);
         add_owner_name(&env, &owner, &name);
+
+        if let Some(nft_client) = get_nft_client(&env) {
+            nft_client.mint(&name, &owner, &metadata_uri, &expires_at);
+        }
+
         Ok(())
     }
 
@@ -186,6 +328,7 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         let mut entry = get_entry(&env, &name)?;
         ensure_owner(&entry, &caller, now_unix)?;
         let old_owner = entry.owner.clone();
@@ -194,10 +337,22 @@ impl RegistryContract {
         put_entry(&env, &name, &entry);
         remove_owner_name(&env, &old_owner, &name);
         add_owner_name(&env, &new_owner, &name);
+
+        if let Some(resolver_id) = entry.resolver.clone() {
+            let resolver_address = Address::from_string(&resolver_id);
+            let resolver_client = ResolverClient::new(&env, &resolver_address);
+            resolver_client.clear_reverse_record(&name, &old_owner);
+        }
+
         env.events().publish(
             (symbol_short!("name"), symbol_short!("transfer")),
-            (name, old_owner, new_owner),
+            (name.clone(), old_owner, new_owner.clone()),
         );
+
+        if let Some(nft_client) = get_nft_client(&env) {
+            nft_client.sync_owner(&name, &new_owner);
+        }
+
         Ok(())
     }
 
@@ -209,8 +364,12 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         let mut entry = get_entry(&env, &name)?;
         ensure_owner(&entry, &caller, now_unix)?;
+        if let Some(resolver_id) = &resolver {
+            Address::from_string(resolver_id);
+        }
         entry.resolver = resolver;
         put_entry(&env, &name, &entry);
         Ok(())
@@ -224,6 +383,7 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         let mut entry = get_entry(&env, &name)?;
         ensure_owner(&entry, &caller, now_unix)?;
         entry.target_address = target_address;
@@ -239,11 +399,47 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         validate_metadata(&metadata_uri)?;
         let mut entry = get_entry(&env, &name)?;
         ensure_owner(&entry, &caller, now_unix)?;
         entry.metadata_uri = metadata_uri;
         put_entry(&env, &name, &entry);
+        Ok(())
+    }
+
+    pub fn update_owner(env: Env, name: String, new_owner: Address) -> Result<(), RegistryError> {
+        // Only the NFT contract can call this function
+        let nft_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::NftContract)
+            .ok_or(RegistryError::Unauthorized)?;
+        let caller = env.caller();
+        if caller != nft_contract {
+            return Err(RegistryError::Unauthorized);
+        }
+
+        let mut entry = get_entry(&env, &name)?;
+        // Verify the name is active (not expired or in grace period)
+        let now_unix = env.ledger().timestamp();
+        ensure_name_unlocked(&env, &name, now_unix)?;
+        if !entry.is_active_at(now_unix) {
+            return Err(RegistryError::NotActive);
+        }
+        let old_owner = entry.owner.clone();
+        entry.owner = new_owner.clone();
+        entry.transfer_count = entry.transfer_count.saturating_add(1);
+        put_entry(&env, &name, &entry);
+        remove_owner_name(&env, &old_owner, &name);
+        add_owner_name(&env, &new_owner, &name);
+        env.events().publish(
+            (symbol_short!("name"), symbol_short!("transfer")),
+            (name.clone(), old_owner, new_owner.clone()),
+        );
+
+        // Note: We don't call back to the NFT contract here to avoid infinite loops
+        // The NFT contract that called us is responsible for keeping its own state in sync
         Ok(())
     }
 
@@ -259,6 +455,7 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         let mut entry = get_entry(&env, &name)?;
         // Allow renewal for the owner as long as the name has not become
         // claimable (i.e. now <= grace_period_ends_at).
@@ -280,6 +477,11 @@ impl RegistryContract {
         entry.expires_at = expires_at;
         entry.grace_period_ends_at = grace_period_ends_at;
         put_entry(&env, &name, &entry);
+
+        if let Some(nft_client) = get_nft_client(&env) {
+            nft_client.sync_expiry(&name, &expires_at);
+        }
+
         Ok(())
     }
 
@@ -327,6 +529,7 @@ impl RegistryContract {
         now_unix: u64,
     ) -> Result<(), RegistryError> {
         caller.require_auth();
+        ensure_name_unlocked(&env, &name, now_unix)?;
         let entry = get_entry(&env, &name)?;
 
         // Only the owner can burn their active name.
@@ -340,10 +543,82 @@ impl RegistryContract {
             .persistent()
             .remove(&DataKey::Entry(name.clone()));
 
+        if let Some(nft_client) = get_nft_client(&env) {
+            nft_client.burn(&name);
+        }
+
         env.events().publish(
             (symbol_short!("name"), symbol_short!("burn")),
             (name, entry.owner),
         );
+        Ok(())
+    }
+
+    pub fn lock_name(
+        env: Env,
+        name: String,
+        caller: Address,
+        locked_until: u64,
+        lock_reason: String,
+        now_unix: u64,
+    ) -> Result<(), RegistryError> {
+        let dispute_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeAdmin)
+            .ok_or(RegistryError::Unauthorized)?;
+        caller.require_auth();
+        if caller != dispute_admin {
+            return Err(RegistryError::Unauthorized);
+        }
+        validate_fqdn_soroban(&name).map_err(|_| RegistryError::Validation)?;
+        let _ = get_entry(&env, &name)?;
+        if locked_until < now_unix {
+            return Err(RegistryError::InvalidExpiry);
+        }
+
+        let lock = NameLock {
+            locked_until,
+            lock_reason: lock_reason.clone(),
+        };
+        put_lock(&env, &name, &lock);
+
+        env.events().publish(
+            (symbol_short!("name"), symbol_short!("lock_applied")),
+            LockApplied {
+                name,
+                locked_until,
+                lock_reason,
+                admin: dispute_admin,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn unlock_name(env: Env, name: String, caller: Address) -> Result<(), RegistryError> {
+        let dispute_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeAdmin)
+            .ok_or(RegistryError::Unauthorized)?;
+        caller.require_auth();
+        if caller != dispute_admin {
+            return Err(RegistryError::Unauthorized);
+        }
+        validate_fqdn_soroban(&name).map_err(|_| RegistryError::Validation)?;
+
+        let lock = remove_lock(&env, &name).ok_or(RegistryError::NotFound)?;
+        env.events().publish(
+            (symbol_short!("name"), symbol_short!("lock_removed")),
+            LockRemoved {
+                name,
+                locked_until: lock.locked_until,
+                lock_reason: lock.lock_reason,
+                admin: dispute_admin,
+            },
+        );
+
         Ok(())
     }
 
@@ -381,6 +656,32 @@ fn get_entry(env: &Env, name: &String) -> Result<RegistryEntry, RegistryError> {
         .persistent()
         .get(&DataKey::Entry(name.clone()))
         .ok_or(RegistryError::NotFound)
+}
+
+fn get_lock(env: &Env, name: &String) -> Option<NameLock> {
+    env.storage()
+        .persistent()
+        .get::<_, NameLock>(&DataKey::Lock(name.clone()))
+}
+
+fn put_lock(env: &Env, name: &String, lock: &NameLock) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Lock(name.clone()), lock);
+}
+
+fn remove_lock(env: &Env, name: &String) -> Option<NameLock> {
+    let key = DataKey::Lock(name.clone());
+    let lock = env.storage().persistent().get::<_, NameLock>(&key)?;
+    env.storage().persistent().remove(&key);
+    Some(lock)
+}
+
+fn get_nft_client(env: &Env) -> Option<NftClient> {
+    env.storage()
+        .instance()
+        .get::<_, Address>(&DataKey::NftContract)
+        .map(|addr| NftClient::new(env, &addr))
 }
 
 fn put_entry(env: &Env, name: &String, entry: &RegistryEntry) {
@@ -432,6 +733,27 @@ fn ensure_owner(
     Ok(())
 }
 
+fn ensure_name_unlocked(env: &Env, name: &String, now_unix: u64) -> Result<(), RegistryError> {
+    if let Some(lock) = get_lock(env, name) {
+        if lock.locked_until >= now_unix {
+            return Err(RegistryError::Locked);
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Lock(name.clone()));
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+struct NameLock {
+    locked_until: u64,
+    lock_reason: String,
+}
+
 fn add_owner_name(env: &Env, owner: &Address, name: &String) {
     let key = DataKey::OwnerNames(owner.clone());
     let mut names = env
@@ -462,4 +784,19 @@ fn remove_owner_name(env: &Env, owner: &Address, name: &String) {
     }
 
     env.storage().persistent().set(&key, &filtered);
+}
+
+fn migrate(from_version: u32, to_version: u32, _data: &Bytes) {
+    let _ = (from_version, to_version);
+}
+
+fn decode_target_version(data: &Bytes) -> u32 {
+    if data.len() < 4 {
+        return CONTRACT_VERSION + 1;
+    }
+    let b0 = data.get(0).unwrap_or(0);
+    let b1 = data.get(1).unwrap_or(0);
+    let b2 = data.get(2).unwrap_or(0);
+    let b3 = data.get(3).unwrap_or(0);
+    u32::from_be_bytes([b0, b1, b2, b3])
 }

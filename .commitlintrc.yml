@@ -1,0 +1,36 @@
+# .commitlintrc.yml
+#
+# Conventional Commits configuration for local pre-commit hooks.
+# This file is NOT used by the CI, which uses scripts/check-commit-message.sh.
+#
+# To use this file, install commitlint and husky:
+#   npm install -g @commitlint/cli @commitlint/config-conventional husky
+#   husky install
+#   npx husky add .husky/commit-msg 'npx --no -- commitlint --edit "$1"'
+
+rules:
+  "type-enum":
+    - 2
+    - "always"
+    - - feat
+      - fix
+      - refactor
+      - test
+      - ci
+      - docs
+      - chore
+      - perf
+      - security
+  "scope-enum":
+    - 2
+    - "always"
+    - - registry
+      - registrar
+      - resolver
+      - auction
+      - subdomain
+      - nft
+      - bridge
+      - sdk
+      - cli
+      - common

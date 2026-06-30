@@ -1,8 +1,14 @@
 use crate::config::NetworkConfig;
+use crate::output::{emit, emit_error, with_spinner, OutputFormat};
 use anyhow::Context;
+use serde_json::json;
 use xlm_ns_sdk::client::XlmNsClient;
 
-pub async fn run_reverse(config: NetworkConfig, address: &str) -> anyhow::Result<()> {
+pub async fn run_reverse(
+    config: NetworkConfig,
+    output: OutputFormat,
+    address: &str,
+) -> anyhow::Result<()> {
     let client = XlmNsClient::new(
         config.rpc_url,
         Some(config.network_passphrase),
@@ -12,15 +18,28 @@ pub async fn run_reverse(config: NetworkConfig, address: &str) -> anyhow::Result
         config.auction_contract_id.clone(),
     );
 
-    let result = client
-        .reverse_resolve(address)
-        .await
-        .context("Failed to perform reverse lookup")?;
+    let result = with_spinner(
+        format!("Looking up {address}"),
+        output,
+        client.reverse_resolve(address),
+    )
+    .await
+    .context("Failed to perform reverse lookup")?;
 
     if let Some(name) = result.primary_name {
-        println!("{} -> {}", result.address, name);
+        let resolved_address = result.address.clone();
+        emit(
+            output,
+            &format!("{} -> {}", resolved_address, name),
+            json!({
+                "address": resolved_address,
+                "primary_name": name,
+                "resolver": result.resolver,
+            }),
+        );
     } else {
-        println!("{} -> [NO PRIMARY NAME]", result.address);
+        let message = format!("{} -> [NO PRIMARY NAME]", result.address);
+        return Err(anyhow::anyhow!(message));
     }
 
     Ok(())
