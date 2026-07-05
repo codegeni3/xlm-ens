@@ -1,0 +1,30 @@
+[package]
+name = "xlm-ns-common-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.xlm-ns-common]
+path = "../packages/xlm-ns-common"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_validate_label"
+path = "fuzz_targets/fuzz_validate_label.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_parse_fqdn"
+path = "fuzz_targets/fuzz_parse_fqdn.rs"
+test = false
+doc = false

@@ -12,14 +12,17 @@ mod tests {
     #[test]
     fn stores_metadata_and_query_methods_after_mint() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
         let metadata_uri = String::from_str(&env, "ipfs://timmy");
 
-        client.mint(&token_id, &owner, &Some(metadata_uri.clone()));
+        client.mint(&token_id, &owner, &Some(metadata_uri.clone()), &0_u64);
 
         assert_eq!(client.owner_of(&token_id), Some(owner.clone()));
         assert_eq!(client.total_supply(), 1);
@@ -40,20 +43,24 @@ mod tests {
     #[test]
     fn rejects_duplicate_mint_for_existing_token_id() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let other_owner = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
 
         let duplicate_mint = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             client.mint(
                 &token_id,
                 &other_owner,
                 &Some(String::from_str(&env, "ipfs://other")),
+                &0_u64,
             );
         }));
 
@@ -66,8 +73,11 @@ mod tests {
     #[test]
     fn stores_approval_and_allows_approved_transfer() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let approved = Address::generate(&env);
@@ -78,6 +88,7 @@ mod tests {
             &token_id,
             &owner,
             &Some(String::from_str(&env, "ipfs://timmy")),
+            &0_u64,
         );
         client.approve(&token_id, &owner, &approved);
 
@@ -101,15 +112,18 @@ mod tests {
     #[test]
     fn rejects_transfer_from_unauthorized_caller() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let intruder = Address::generate(&env);
         let new_owner = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
 
         let unauthorized_transfer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             client.transfer(&token_id, &intruder, &new_owner);
@@ -129,8 +143,11 @@ mod tests {
     #[test]
     fn updates_query_methods_after_owner_transfer() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let new_owner = Address::generate(&env);
@@ -141,6 +158,7 @@ mod tests {
             &token_id,
             &owner,
             &Some(String::from_str(&env, "ipfs://timmy")),
+            &0_u64,
         );
         client.approve(&token_id, &owner, &approved);
         client.transfer(&token_id, &owner, &new_owner);
@@ -172,8 +190,11 @@ mod tests {
     #[test]
     fn enumerates_global_and_owner_tokens_across_multiple_mints() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let other_owner = Address::generate(&env);
@@ -185,12 +206,14 @@ mod tests {
             &first_token,
             &owner,
             &Some(String::from_str(&env, "ipfs://alpha")),
+            &0_u64,
         );
-        client.mint(&second_token, &owner, &None::<String>);
+        client.mint(&second_token, &owner, &None::<String>, &0_u64);
         client.mint(
             &third_token,
             &other_owner,
             &Some(String::from_str(&env, "ipfs://gamma")),
+            &0_u64,
         );
 
         assert_eq!(client.total_supply(), 3);
@@ -303,8 +326,11 @@ mod tests {
     #[test]
     fn invariants_hold_after_mint_approve_transfer_sequence() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
@@ -315,9 +341,9 @@ mod tests {
         let beta = String::from_str(&env, "beta.xlm");
         let gamma = String::from_str(&env, "gamma.xlm");
 
-        client.mint(&alpha, &alice, &None::<String>);
-        client.mint(&beta, &alice, &None::<String>);
-        client.mint(&gamma, &bob, &None::<String>);
+        client.mint(&alpha, &alice, &None::<String>, &0_u64);
+        client.mint(&beta, &alice, &None::<String>, &0_u64);
+        client.mint(&gamma, &bob, &None::<String>, &0_u64);
         assert_enumeration_consistent(&client, &owners);
 
         // Direct owner transfer.
@@ -336,6 +362,7 @@ mod tests {
             &delta,
             &alice,
             &Some(String::from_str(&env, "ipfs://delta")),
+            &0_u64,
         );
         assert_enumeration_consistent(&client, &owners);
 
@@ -347,8 +374,11 @@ mod tests {
     #[test]
     fn no_op_transfer_to_same_owner_is_idempotent_and_keeps_invariants() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
@@ -357,8 +387,8 @@ mod tests {
         let alpha = String::from_str(&env, "alpha.xlm");
         let beta = String::from_str(&env, "beta.xlm");
 
-        client.mint(&alpha, &alice, &None::<String>);
-        client.mint(&beta, &bob, &None::<String>);
+        client.mint(&alpha, &alice, &None::<String>, &0_u64);
+        client.mint(&beta, &bob, &None::<String>, &0_u64);
 
         let alice_balance_before = client.balance_of(&alice);
         let supply_before = client.total_supply();
@@ -388,8 +418,11 @@ mod tests {
     #[test]
     fn approval_changes_do_not_change_enumeration_queries() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let approved = Address::generate(&env);
@@ -399,6 +432,7 @@ mod tests {
             &token_id,
             &owner,
             &Some(String::from_str(&env, "ipfs://timmy")),
+            &0_u64,
         );
         client.approve(&token_id, &owner, &approved);
 
@@ -454,13 +488,16 @@ mod tests {
     #[test]
     fn test_mint_emits_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
 
         let events = env.events().all();
         let (topics, _data) = last_event_topics_data(&events);
@@ -470,14 +507,17 @@ mod tests {
     #[test]
     fn test_approve_emits_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let approved = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
         client.approve(&token_id, &owner, &approved);
 
         let events = env.events().all();
@@ -488,14 +528,17 @@ mod tests {
     #[test]
     fn test_approve_clear_emits_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let approved = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
         client.approve(&token_id, &owner, &approved);
         client.approve_clear(&token_id, &owner);
 
@@ -507,14 +550,17 @@ mod tests {
     #[test]
     fn test_transfer_owner_emits_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let new_owner = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
         client.transfer(&token_id, &owner, &new_owner);
 
         let events = env.events().all();
@@ -525,15 +571,18 @@ mod tests {
     #[test]
     fn test_transfer_from_emits_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(NftContract, ());
         let client = NftContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let approved = Address::generate(&env);
         let recipient = Address::generate(&env);
         let token_id = String::from_str(&env, "timmy.xlm");
 
-        client.mint(&token_id, &owner, &None::<String>);
+        client.mint(&token_id, &owner, &None::<String>, &0_u64);
         client.approve(&token_id, &owner, &approved);
         client.transfer_from(&approved, &owner, &recipient, &token_id);
 
@@ -575,12 +624,14 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let client = NftContractClient::new(&env, &env.register(NftContract, ()));
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         let t1 = String::from_str(&env, "a.xlm");
         let t2 = String::from_str(&env, "b.xlm");
-        client.mint(&t1, &alice, &None::<String>);
-        client.mint(&t2, &alice, &None::<String>);
+        client.mint(&t1, &alice, &None::<String>, &0_u64);
+        client.mint(&t2, &alice, &None::<String>, &0_u64);
 
         client.transfer(&t1, &alice, &bob);
 
@@ -597,11 +648,13 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let client = NftContractClient::new(&env, &env.register(NftContract, ()));
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         let operator = Address::generate(&env);
         let t1 = String::from_str(&env, "a.xlm");
-        client.mint(&t1, &alice, &None::<String>);
+        client.mint(&t1, &alice, &None::<String>, &0_u64);
 
         client.approve(&t1, &alice, &operator);
         client.transfer(&t1, &operator, &bob); // performed by the approved operator
@@ -620,9 +673,11 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let client = NftContractClient::new(&env, &env.register(NftContract, ()));
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
         let alice = Address::generate(&env);
         let t1 = String::from_str(&env, "a.xlm");
-        client.mint(&t1, &alice, &None::<String>);
+        client.mint(&t1, &alice, &None::<String>, &0_u64);
 
         client.transfer(&t1, &alice, &alice); // owner unchanged
 
@@ -691,7 +746,7 @@ mod tests {
                 &grace_ends,
             );
 
-            nft.mint(&token_id, &owner, &None::<String>);
+            nft.mint(&token_id, &owner, &None::<String>, &expires_at);
 
             let meta = nft.metadata(&token_id, &now).unwrap();
             assert_eq!(meta.registration_date, now);
@@ -724,7 +779,7 @@ mod tests {
                 &grace_ends,
             );
 
-            nft.mint(&token_id, &owner, &None::<String>);
+            nft.mint(&token_id, &owner, &None::<String>, &expires_at);
 
             let after_expiry = expires_at + 1;
             let meta = nft.metadata(&token_id, &after_expiry).unwrap();
@@ -755,7 +810,7 @@ mod tests {
                 &grace_ends,
             );
 
-            nft.mint(&token_id, &owner, &None::<String>);
+            nft.mint(&token_id, &owner, &None::<String>, &expires_at);
 
             let before_expiry = expires_at - 1;
             let meta = nft.metadata(&token_id, &before_expiry).unwrap();
@@ -775,7 +830,7 @@ mod tests {
             let owner = Address::generate(&env);
             let token_id = String::from_str(&env, "timmy.xlm");
 
-            nft.mint(&token_id, &owner, &None::<String>);
+            nft.mint(&token_id, &owner, &None::<String>, &0_u64);
 
             assert_eq!(nft.metadata(&token_id, &1_000_000), None);
         }
@@ -813,7 +868,7 @@ mod tests {
                 &grace_ends,
             );
 
-            nft.mint(&token_id, &owner, &None::<String>);
+            nft.mint(&token_id, &owner, &None::<String>, &expires_at);
 
             let initial_meta = nft.metadata(&token_id, &now).unwrap();
             assert_eq!(initial_meta.expiry_date, expires_at);

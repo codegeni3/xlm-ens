@@ -89,7 +89,7 @@ pub async fn run_bulk_register(
                 client.register(xlm_ns_sdk::types::RegistrationRequest {
                     label: record.name.clone(),
                     owner: record.owner.clone(),
-                    duration_years: record.duration,
+                    duration_years: record.duration as u32,
                     signer: None,
                 }),
             )
@@ -179,9 +179,9 @@ pub async fn run_bulk_renew(
             match with_spinner(
                 format!("Submitting renewal for {}", record.name),
                 OutputFormat::Human,
-                client.renew(xlm_ns_sdk::types::RenewRequest {
-                    label: record.name.clone(),
-                    duration_years: record.duration,
+                client.renew(xlm_ns_sdk::types::RenewalRequest {
+                    name: record.name.clone(),
+                    additional_years: record.duration as u32,
                     signer: None,
                 }),
             )
@@ -189,8 +189,8 @@ pub async fn run_bulk_renew(
             {
                 Ok(receipt) => {
                     print_human(&format!(
-                        "  - SUCCESS: renewed {}\n    Fee paid: {} XLM\n    Expires at: {}\n    Status: {}\n    Transaction Hash: {}",
-                        receipt.name, receipt.fee_paid, receipt.expires_at, receipt.submission.status, receipt.submission.tx_hash
+                        "  - SUCCESS: renewed {}\n    Fee paid: {} XLM\n    New expiry: {}\n    Status: {}\n    Transaction Hash: {}",
+                        receipt.name, receipt.fee_paid, receipt.new_expiry, receipt.submission.status, receipt.submission.tx_hash
                     ));
                 }
                 Err(e) => {

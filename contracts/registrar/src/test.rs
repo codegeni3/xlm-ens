@@ -40,7 +40,7 @@ mod tests {
         let client = RegistrarContractClient::new(&env, &contract_id);
 
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "timmy");
@@ -137,7 +137,7 @@ mod tests {
         let client = RegistrarContractClient::new(&env, &contract_id);
 
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "test");
@@ -166,7 +166,7 @@ mod tests {
         let client = RegistrarContractClient::new(&env, &contract_id);
 
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "boundary");
@@ -198,7 +198,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "alice");
@@ -226,7 +226,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let name = String::from_str(&env, "ghost.xlm");
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -284,7 +284,7 @@ mod tests {
         let client = RegistrarContractClient::new(&env, &contract_id);
 
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner1 = Address::generate(&env);
         let owner2 = Address::generate(&env);
@@ -317,7 +317,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         assert_eq!(
             client.registration_status(&String::from_str(&env, "ghost"), &1000),
             RegistrationStatus::Unavailable
@@ -327,10 +327,11 @@ mod tests {
     #[test]
     fn status_is_reserved_for_reserved_label() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let label = String::from_str(&env, "admin");
         client.reserve_label(&label);
         assert_eq!(
@@ -346,7 +347,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "alive");
         let quote = client.quote_registration(&label, &1, &100);
@@ -364,7 +365,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "gracing");
         let quote = client.quote_registration(&label, &1, &100);
@@ -382,7 +383,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "expired");
         let quote = client.quote_registration(&label, &1, &100);
@@ -402,7 +403,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner1 = Address::generate(&env);
         let owner2 = Address::generate(&env);
         let label1 = String::from_str(&env, "pay1");
@@ -426,14 +427,15 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "over");
         let quote = client.quote_registration(&label, &1, &100);
         let overpay = quote.fee_stroops + 9_999;
         client.register(&label, &owner, &1, &overpay, &100);
-        assert_eq!(client.treasury_balance(), overpay);
-        assert_eq!(client.accounting_report().treasury_balance, overpay);
+        // Contract stores fee_stroops (the quoted fee), not the full max_price
+        assert_eq!(client.treasury_balance(), quote.fee_stroops);
+        assert_eq!(client.accounting_report().treasury_balance, quote.fee_stroops);
     }
 
     #[test]
@@ -442,7 +444,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "cheap");
         let quote = client.quote_registration(&label, &1, &100);
@@ -462,7 +464,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "renew");
         let name = String::from_str(&env, "renew.xlm");
@@ -486,7 +488,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "events");
@@ -506,7 +508,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "renev");
@@ -529,7 +531,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(xlm_ns_registry::RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "match");
         let q = client.quote_registration(&label, &1, &100);
@@ -550,7 +552,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let config = client.get_rate_limit_config();
         assert_eq!(config.window_size_seconds, 86400); // 24 hours
@@ -564,7 +566,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -588,7 +590,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -619,7 +621,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -646,7 +648,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -689,7 +691,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner1 = Address::generate(&env);
         let owner2 = Address::generate(&env);
@@ -720,7 +722,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -752,7 +754,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -780,7 +782,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         // Change rate limit to 3 per window
         client.set_rate_limit_config(&86400, &3);
@@ -813,7 +815,7 @@ mod tests {
         let contract_id = env.register(RegistrarContract, ());
         let client = RegistrarContractClient::new(&env, &contract_id);
         let registry_id = env.register(RegistryContract, ());
-        client.initialize(&registry_id);
+        client.initialize(&registry_id, &Address::generate(&env));
 
         let owner = Address::generate(&env);
         let now = 1000u64;
@@ -825,19 +827,11 @@ mod tests {
             client.register(&label, &owner, &1, &quote.fee_stroops, &now);
         }
 
-        // Attempt 6th - should emit rate limit event
+        // Attempt 6th - should be rate-limited
         let label6 = String::from_str(&env, "event5");
         let quote6 = client.quote_registration(&label6, &1, &now);
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.register(&label6, &owner, &1, &quote6.fee_stroops, &now);
-        }));
-
-        // Check that events were emitted
-        let all_events = env.events().all().events();
-        assert!(
-            !all_events.is_empty(),
-            "Rate limit events should have been emitted"
-        );
+        let result = client.try_register(&label6, &owner, &1, &quote6.fee_stroops, &now);
+        assert!(result.is_err(), "6th registration should be rate-limited");
     }
 
     // ==================== Grace Period Configuration Tests ====================

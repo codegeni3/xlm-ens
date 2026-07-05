@@ -57,7 +57,7 @@ mod tests {
             from: Address,
             to: Address,
             amount: i128,
-        ) -> Result<(), ()> {
+        ) {
             if !env
                 .storage()
                 .instance()
@@ -91,7 +91,6 @@ mod tests {
             env.storage()
                 .persistent()
                 .set(&to_key, &to_balance.saturating_add(amount));
-            Ok(())
         }
     }
 
@@ -130,6 +129,9 @@ mod tests {
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
 
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
         let alice = Address::generate(&env);
@@ -162,6 +164,9 @@ mod tests {
         let auction_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &auction_id);
 
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let alice = Address::generate(&env);
         let treasury = Address::generate(&env);
         let name = String::from_str(&env, "guarded.xlm");
@@ -185,6 +190,9 @@ mod tests {
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
 
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let (asset, _, _) = setup_token(&env);
         let treasury = Address::generate(&env);
         let name = String::from_str(&env, "ghost.xlm");
@@ -200,6 +208,9 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
@@ -225,6 +236,9 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
@@ -262,6 +276,9 @@ mod tests {
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
 
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
         let alice = Address::generate(&env);
@@ -287,6 +304,9 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
@@ -319,6 +339,9 @@ mod tests {
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
 
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let (asset, token_admin, token) = setup_token(&env);
         let treasury = Address::generate(&env);
         let alice = Address::generate(&env);
@@ -345,8 +368,12 @@ mod tests {
     #[test]
     fn list_auctions_paginates_in_creation_order() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         // Empty state: every helper returns an empty Vec, count is zero.
         assert_eq!(client.auction_count(), 0);
@@ -386,6 +413,9 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
         let (asset, token_admin, _) = setup_token(&env);
         let treasury = Address::generate(&env);
@@ -431,8 +461,11 @@ mod tests {
     #[test]
     fn list_helpers_cap_limit_at_max_page_size() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(AuctionContract, ());
         let client = AuctionContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
         let asset = Address::generate(&env);
         let treasury = Address::generate(&env);
 
@@ -445,4 +478,8 @@ mod tests {
             let name = String::from_str(&env, &s);
             client.create_auction(&name, &asset, &treasury, &100, &10, &20);
         }
-        let huge = client.list_auctions(&0, &u32::
+        let huge = client.list_auctions(&0, &u32::MAX);
+        // Contract caps at MAX_PAGE_SIZE (100), but we only have 5.
+        assert_eq!(huge.len(), 5);
+    }
+}

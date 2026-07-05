@@ -36,9 +36,9 @@ mod registry_nft_integration {
 
         let admin = Address::generate(&env);
 
-        let registry_id = env.register_contract(None, RegistryContract);
-        let registrar_id = env.register_contract(None, RegistrarContract);
-        let nft_id = env.register_contract(None, NftContract);
+        let registry_id = env.register(RegistryContract, ());
+        let registrar_id = env.register(RegistrarContract, ());
+        let nft_id = env.register(NftContract, ());
 
         let registrar = RegistrarContractClient::new(&env, &registrar_id);
         let registry = RegistryContractClient::new(&env, &registry_id);
@@ -46,7 +46,7 @@ mod registry_nft_integration {
         
         // Initialize contracts
         registry.initialize(&admin);
-        registrar.initialize(&registry_id);
+        registrar.initialize(&registry_id, &admin);
         nft.initialize(&admin);
 
         // Wire the registry to the NFT contract

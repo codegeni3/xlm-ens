@@ -2,8 +2,8 @@
 mod test;
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, contracttype,
-    symbol_short, Address, Bytes, Env, String, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype,
+    symbol_short, Address, Bytes, BytesN, Env, String, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::time::{is_active_at, is_claimable_at};
@@ -13,7 +13,6 @@ pub const ADMIN_RECOVERY_SUPPORTED: bool = false;
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const CONTRACT_VERSION: u32 = 1;
 
-#[contractevent]
 #[contracttype]
 pub struct ContractUpgraded {
     pub old_version: u32,
@@ -21,7 +20,6 @@ pub struct ContractUpgraded {
     pub admin: Address,
 }
 
-#[contractevent]
 #[contracttype]
 pub struct LockApplied {
     pub name: String,
@@ -30,7 +28,6 @@ pub struct LockApplied {
     pub admin: Address,
 }
 
-#[contractevent]
 #[contracttype]
 pub struct LockRemoved {
     pub name: String,
@@ -178,7 +175,7 @@ impl RegistryContract {
 
     pub fn upgrade(
         env: Env,
-        new_wasm_hash: Bytes,
+        new_wasm_hash: BytesN<32>,
         migration_data: Bytes,
     ) -> Result<(), RegistryError> {
         let admin: Address = env
@@ -261,7 +258,7 @@ impl RegistryContract {
             owner: owner.clone(),
             resolver: None,
             target_address,
-            metadata_uri,
+            metadata_uri: metadata_uri.clone(),
             ttl_seconds: DEFAULT_TTL_SECONDS,
             registered_at: now_unix,
             expires_at,
@@ -408,14 +405,14 @@ impl RegistryContract {
         Ok(())
     }
 
-    pub fn update_owner(env: Env, name: String, new_owner: Address) -> Result<(), RegistryError> {
+    pub fn update_owner(env: Env, name: String, caller: Address, new_owner: Address) -> Result<(), RegistryError> {
         // Only the NFT contract can call this function
         let nft_contract: Address = env
             .storage()
             .instance()
             .get(&DataKey::NftContract)
             .ok_or(RegistryError::Unauthorized)?;
-        let caller = env.caller();
+        caller.require_auth();
         if caller != nft_contract {
             return Err(RegistryError::Unauthorized);
         }
@@ -584,7 +581,7 @@ impl RegistryContract {
         put_lock(&env, &name, &lock);
 
         env.events().publish(
-            (symbol_short!("name"), symbol_short!("lock_applied")),
+            (symbol_short!("name"), symbol_short!("lck_apld")),
             LockApplied {
                 name,
                 locked_until,
@@ -610,7 +607,7 @@ impl RegistryContract {
 
         let lock = remove_lock(&env, &name).ok_or(RegistryError::NotFound)?;
         env.events().publish(
-            (symbol_short!("name"), symbol_short!("lock_removed")),
+            (symbol_short!("name"), symbol_short!("lck_rmvd")),
             LockRemoved {
                 name,
                 locked_until: lock.locked_until,

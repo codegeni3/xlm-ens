@@ -22,7 +22,7 @@ mod tests {
 
         client.register_parent(&parent, &owner);
 
-        assert_eq!(env.events().all().len(), 1);
+        assert_eq!(env.events().all().events().len(), 1);
     }
 
     #[test]
@@ -47,7 +47,7 @@ mod tests {
         );
 
         assert_eq!(fqdn, String::from_str(&env, "pay.timmy.xlm"));
-        assert_eq!(env.events().all().len(), 2);
+        assert_eq!(env.events().all().events().len(), 2);
     }
 
     #[test]
@@ -74,7 +74,7 @@ mod tests {
 
         client.transfer(&fqdn, &sub_owner, &new_owner);
 
-        assert_eq!(env.events().all().len(), 3);
+        assert_eq!(env.events().all().events().len(), 3);
         assert_eq!(client.record(&fqdn).unwrap().owner, new_owner);
     }
 
@@ -101,7 +101,7 @@ mod tests {
 
         client.revoke(&fqdn, &sub_owner);
 
-        assert_eq!(env.events().all().len(), 3);
+        assert_eq!(env.events().all().events().len(), 3);
         assert!(!client.exists(&fqdn));
     }
 
@@ -120,10 +120,10 @@ mod tests {
         client.register_parent(&parent, &owner);
 
         client.add_controller(&parent, &owner, &controller);
-        assert_eq!(env.events().all().len(), 2);
+        assert_eq!(env.events().all().events().len(), 2);
 
         client.remove_controller(&parent, &owner, &controller);
-        assert_eq!(env.events().all().len(), 3);
+        assert_eq!(env.events().all().events().len(), 3);
     }
 
     #[test]

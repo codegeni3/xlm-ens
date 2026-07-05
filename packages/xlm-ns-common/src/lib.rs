@@ -20,6 +20,7 @@ pub use time::{
 };
 #[cfg(feature = "soroban")]
 pub use soroban::validate_label_bytes;
+#[cfg(feature = "soroban")]
 pub use types::RegistryEntry;
 pub use types::{NameHash, NameRecord, Tld};
 pub use validation::{

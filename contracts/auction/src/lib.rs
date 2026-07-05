@@ -81,7 +81,6 @@ pub struct ContractUpgraded {
 }
 
 #[contractevent]
-#[contracttype]
 pub struct AuctionCancelled {
     pub name: String,
     pub admin: Address,
@@ -140,7 +139,7 @@ impl AuctionContract {
 
         env.events().publish(
             (symbol_short!("auction"), symbol_short!("upgraded")),
-            (current_version, target_version, admin),
+            (current_version, target_version, admin.clone()),
         );
         ContractUpgraded {
             old_version: current_version,
@@ -167,7 +166,7 @@ impl AuctionContract {
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(AuctionError::Unauthorized)?;
+            .ok_or(AuctionError::NotFound)?;
         admin.require_auth();
         validate_fqdn_soroban(&name).map_err(|_| AuctionError::Validation)?;
         let key = DataKey::Auction(name.clone());

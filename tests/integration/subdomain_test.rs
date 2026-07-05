@@ -1,4 +1,4 @@
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, String};
 
 use xlm_ns_registry::{NameState, RegistryContract, RegistryContractClient};
 use xlm_ns_resolver::ResolverContract;
@@ -7,6 +7,7 @@ use xlm_ns_subdomain::SubdomainContract;
 #[test]
 fn subdomain_flow_covers_controller_delegation_transfer_and_resolution() {
     let env = Env::default();
+    env.mock_all_auths();
 
     let subdomain_contract_id = env.register(SubdomainContract, ());
     let resolver_contract_id = env.register(ResolverContract, ());
@@ -23,8 +24,8 @@ fn subdomain_flow_covers_controller_delegation_transfer_and_resolution() {
     let parent = String::from_str(&env, "timmy.xlm");
     let label = String::from_str(&env, "pay");
     let fqdn = String::from_str(&env, "pay.timmy.xlm");
-    let first_address = String::from_str(&env, "GABC");
-    let second_address = String::from_str(&env, "GDEF");
+    let first_address = subdomain_owner.to_string();
+    let second_address = next_owner.to_string();
 
     subdomain.register_parent(&parent, &parent_owner);
 
@@ -146,11 +147,10 @@ fn parent_expiry_purges_subdomains_and_allows_reregistration() {
 
     env.ledger().set_timestamp(start);
 
-    registry.initialize(&admin).unwrap();
-    subdomain.initialize(&admin).unwrap();
+    registry.initialize(&admin);
+    subdomain.initialize(&admin);
     subdomain
-        .set_registry_contract(&registry_contract_id)
-        .unwrap();
+        .set_registry_contract(&registry_contract_id);
 
     registry
         .register(
@@ -161,14 +161,11 @@ fn parent_expiry_purges_subdomains_and_allows_reregistration() {
             &start,
             &expiry,
             &grace_end,
-        )
-        .unwrap();
+        );
     subdomain
-        .register_parent(&parent, &old_parent_owner)
-        .unwrap();
+        .register_parent(&parent, &old_parent_owner);
     subdomain
-        .add_controller(&parent, &old_parent_owner, &controller)
-        .unwrap();
+        .add_controller(&parent, &old_parent_owner, &controller);
 
     let first_fqdn = subdomain
         .create(
@@ -177,8 +174,7 @@ fn parent_expiry_purges_subdomains_and_allows_reregistration() {
             &controller,
             &old_subdomain_owner,
             &(start + 1),
-        )
-        .unwrap();
+        );
     assert_eq!(first_fqdn, fqdn);
     assert!(subdomain.exists(&fqdn));
     assert_eq!(subdomain.subdomains_for_parent(&parent).len(), 1);
@@ -241,11 +237,9 @@ fn parent_expiry_purges_subdomains_and_allows_reregistration() {
             &(grace_end + 1),
             &renewed_expiry,
             &renewed_grace_end,
-        )
-        .unwrap();
+        );
     subdomain
-        .register_parent(&parent, &new_parent_owner)
-        .unwrap();
+        .register_parent(&parent, &new_parent_owner);
 
     let recreated_fqdn = subdomain
         .create(
@@ -254,8 +248,7 @@ fn parent_expiry_purges_subdomains_and_allows_reregistration() {
             &new_parent_owner,
             &new_subdomain_owner,
             &(grace_end + 2),
-        )
-        .unwrap();
+        );
 
     assert_eq!(recreated_fqdn, fqdn);
     assert!(subdomain.exists(&fqdn));
@@ -295,11 +288,10 @@ fn subdomain_transfer_attempts_fail_during_parent_grace_period() {
 
     env.ledger().set_timestamp(start);
 
-    registry.initialize(&admin).unwrap();
-    subdomain.initialize(&admin).unwrap();
+    registry.initialize(&admin);
+    subdomain.initialize(&admin);
     subdomain
-        .set_registry_contract(&registry_contract_id)
-        .unwrap();
+        .set_registry_contract(&registry_contract_id);
 
     registry
         .register(
@@ -310,9 +302,8 @@ fn subdomain_transfer_attempts_fail_during_parent_grace_period() {
             &start,
             &expiry,
             &grace_end,
-        )
-        .unwrap();
-    subdomain.register_parent(&parent, &parent_owner).unwrap();
+        );
+    subdomain.register_parent(&parent, &parent_owner);
     subdomain
         .create(
             &String::from_str(&env, "pay"),
@@ -320,8 +311,7 @@ fn subdomain_transfer_attempts_fail_during_parent_grace_period() {
             &parent_owner,
             &subdomain_owner,
             &(start + 1),
-        )
-        .unwrap();
+        );
 
     env.ledger().set_timestamp(expiry + 1);
     assert_eq!(

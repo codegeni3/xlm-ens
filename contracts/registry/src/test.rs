@@ -803,7 +803,7 @@ mod tests {
                     contract_id.clone(),
                     (
                         soroban_sdk::symbol_short!("name"),
-                        soroban_sdk::symbol_short!("lock_applied"),
+                        soroban_sdk::symbol_short!("lck_apld"),
                     )
                         .into_val(&env),
                     crate::LockApplied {
@@ -826,7 +826,7 @@ mod tests {
                     contract_id.clone(),
                     (
                         soroban_sdk::symbol_short!("name"),
-                        soroban_sdk::symbol_short!("lock_removed"),
+                        soroban_sdk::symbol_short!("lck_rmvd"),
                     )
                         .into_val(&env),
                     crate::LockRemoved {

@@ -73,7 +73,7 @@ pub async fn run_register(
     let quote = with_spinner(
         format!("Fetching registration quote for {label}.xlm"),
         output,
-        client.quote_registration(label, duration_years),
+        client.quote_registration(&label, duration_years),
     )
     .await
     .context("Failed to fetch registration quote")?;
@@ -106,7 +106,7 @@ pub async fn run_register(
         format!("Submitting registration for {label}.xlm"),
         output,
         client.register(RegistrationRequest {
-            label: label.into(),
+            label: label.clone(),
             owner: owner.into(),
             duration_years,
             signer: signer_name.clone(),
@@ -195,7 +195,7 @@ where
     loop {
         let default_value = existing
             .as_deref()
-            .map(validate)
+            .map(|v| validate(v))
             .transpose()?
             .unwrap_or_default();
 

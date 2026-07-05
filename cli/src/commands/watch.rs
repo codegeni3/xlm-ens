@@ -146,7 +146,11 @@ pub async fn run(config: NetworkConfig, command: WatchCommand) -> anyhow::Result
 
             for name in &watchlist.names {
                 let registration = client.get_registration(name).await?;
-                let status = ExpiryStatus::from_expires_at(registration.and_then(|r| r.expires_at));
+                let status = ExpiryStatus::from_expires_at(
+                    registration
+                        .and_then(|r| r.expires_at)
+                        .and_then(|ts| DateTime::from_timestamp(ts as i64, 0)),
+                );
 
                 let (status_str, color) = match status {
                     ExpiryStatus::Safe(expiry) => (

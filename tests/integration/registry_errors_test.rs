@@ -1,51 +1,60 @@
 //! Negative tests for the Registry contract, ensuring all error paths are covered.
 
-use soroban_sdk::{
-    testutils::{Address as _, Events},
-    Address, Env, Error,
-};
-use tests::common::{
-    create_and_init_contracts, setup_test_domain, TestContracts, DEFAULT_GRACE_PERIOD,
-    DEFAULT_TTL,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use xlm_ns_registry::{RegistryContract, RegistryContractClient, RegistryError};
 
-/// Checklist for RegistryError variants:
-///
-/// - [x] AlreadyRegistered = 1
-/// - [x] NotFound = 2
-/// - [x] NotYetClaimable = 3
-/// - [x] NotActive = 4
-/// - [x] Unauthorized = 5
-/// - [x] MetadataTooLong = 6
-/// - [x] Validation = 7
-/// - [x] InvalidExpiry = 8
-/// - [x] InvalidGracePeriod = 9
-/// - [ ] UpgradeFailed = 10  (Difficult to test reliably in unit tests)
+const DEFAULT_TTL: u64 = 365 * 24 * 3600; // 1 year
+const DEFAULT_GRACE_PERIOD: u64 = 30 * 24 * 3600; // 30 days
+
+fn setup(env: &Env) -> RegistryContractClient<'static> {
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    client.initialize(&admin);
+    client
+}
+
+fn register_domain(
+    env: &Env,
+    registry: &RegistryContractClient,
+    name_str: &str,
+) -> (Address, u64) {
+    let owner = Address::generate(env);
+    let now = env.ledger().timestamp();
+    let name = String::from_str(env, name_str);
+    registry.register(
+        &name,
+        &owner,
+        &None::<String>,
+        &None::<String>,
+        &now,
+        &(now + DEFAULT_TTL),
+        &(now + DEFAULT_TTL + DEFAULT_GRACE_PERIOD),
+    );
+    (owner, now)
+}
 
 #[test]
 fn test_register_fails_if_already_registered() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
-    let (owner, _) = setup_test_domain(&env, &registry, "test.xlm");
+    let registry = setup(&env);
+    let (owner, now) = register_domain(&env, &registry, "test.xlm");
+    let name = String::from_str(&env, "test.xlm");
 
     // Attempt to register the same name again
     let res = registry.try_register(
-        &"test.xlm".into_string(&env),
+        &name,
         &owner,
-        &None,
-        &None,
-        &None,
-        &(env.ledger().timestamp() + DEFAULT_TTL),
-        &(env.ledger().timestamp() + DEFAULT_TTL + DEFAULT_GRACE_PERIOD),
-        &env.ledger().timestamp(),
+        &None::<String>,
+        &None::<String>,
+        &now,
+        &(now + DEFAULT_TTL),
+        &(now + DEFAULT_TTL + DEFAULT_GRACE_PERIOD),
     );
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(1)))); // AlreadyRegistered
+    assert!(matches!(res, Err(Ok(RegistryError::AlreadyRegistered))));
 }
 
 #[test]
@@ -53,21 +62,14 @@ fn test_transfer_fails_if_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
+    let registry = setup(&env);
     let owner = Address::generate(&env);
     let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "nonexistent.xlm");
 
-    let res = registry.try_transfer(
-        &"nonexistent.xlm".into_string(&env),
-        &owner,
-        &new_owner,
-        &env.ledger().timestamp(),
-    );
+    let res = registry.try_transfer(&name, &owner, &new_owner, &env.ledger().timestamp());
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(2)))); // NotFound
+    assert!(matches!(res, Err(Ok(RegistryError::NotFound))));
 }
 
 #[test]
@@ -75,16 +77,14 @@ fn test_burn_fails_if_not_yet_claimable() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
-    let (owner, _) = setup_test_domain(&env, &registry, "test.xlm");
+    let registry = setup(&env);
+    let (owner, _) = register_domain(&env, &registry, "test.xlm");
+    let name = String::from_str(&env, "test.xlm");
 
     // Name is active, so it's not claimable
-    let res = registry.try_burn(&"test.xlm".into_string(&env), &owner, &env.ledger().timestamp());
+    let res = registry.try_burn(&name, &owner, &env.ledger().timestamp());
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(3)))); // NotYetClaimable
+    assert!(matches!(res, Err(Ok(RegistryError::NotYetClaimable))));
 }
 
 #[test]
@@ -92,26 +92,17 @@ fn test_transfer_fails_if_in_grace_period() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
-    let (owner, _) = setup_test_domain(&env, &registry, "test.xlm");
+    let registry = setup(&env);
+    let (owner, now) = register_domain(&env, &registry, "test.xlm");
     let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "test.xlm");
 
-    // Advance time past expiry into grace period
-    env.ledger().with_mut(|l| {
-        l.timestamp = l.timestamp + DEFAULT_TTL + 1;
-    });
+    // Time past expiry into grace period
+    let future_time = now + DEFAULT_TTL + 1;
 
-    let res = registry.try_transfer(
-        &"test.xlm".into_string(&env),
-        &owner,
-        &new_owner,
-        &env.ledger().timestamp(),
-    );
+    let res = registry.try_transfer(&name, &owner, &new_owner, &future_time);
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(4)))); // NotActive
+    assert!(matches!(res, Err(Ok(RegistryError::NotActive))));
 }
 
 #[test]
@@ -119,23 +110,21 @@ fn test_transfer_fails_if_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
-    let (owner, _) = setup_test_domain(&env, &registry, "test.xlm");
+    let registry = setup(&env);
+    let (_owner, _) = register_domain(&env, &registry, "test.xlm");
     let attacker = Address::generate(&env);
     let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "test.xlm");
 
     // Attacker (not owner) tries to transfer
     let res = registry.try_transfer(
-        &"test.xlm".into_string(&env),
+        &name,
         &attacker, // Unauthorized caller
         &new_owner,
         &env.ledger().timestamp(),
     );
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(5)))); // Unauthorized
+    assert!(matches!(res, Err(Ok(RegistryError::Unauthorized))));
 }
 
 #[test]
@@ -143,25 +132,24 @@ fn test_register_fails_if_metadata_too_long() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let TestContracts {
-        registry,
-        registrar: _,
-    } = create_and_init_contracts(&env);
+    let registry = setup(&env);
     let owner = Address::generate(&env);
+    let name = String::from_str(&env, "test2.xlm");
+    let now = env.ledger().timestamp();
 
     // From common/src/lib.rs, MAX_METADATA_LEN is 1024
     let long_metadata = "a".repeat(1025);
+    let long_metadata_str = String::from_str(&env, &long_metadata);
 
     let res = registry.try_register(
-        &"test.xlm".into_string(&env),
+        &name,
         &owner,
-        &None,
-        &None,
-        &Some(long_metadata.into_string(&env)),
-        &(env.ledger().timestamp() + DEFAULT_TTL),
-        &(env.ledger().timestamp() + DEFAULT_TTL + DEFAULT_GRACE_PERIOD),
-        &env.ledger().timestamp(),
+        &None::<String>,
+        &Some(long_metadata_str),
+        &now,
+        &(now + DEFAULT_TTL),
+        &(now + DEFAULT_TTL + DEFAULT_GRACE_PERIOD),
     );
 
-    assert_eq!(res, Err(Ok(Error::from_contract_error(6)))); // MetadataTooLong
+    assert!(matches!(res, Err(Ok(RegistryError::MetadataTooLong))));
 }

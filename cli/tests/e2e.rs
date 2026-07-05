@@ -15,7 +15,7 @@ fn account_address(fill: char) -> String {
     format!("G{}", fill.to_string().repeat(55))
 }
 
-fn base_args() -> Vec<String> {
+fn network_args() -> Vec<String> {
     vec![
         "--network".into(),
         "testnet".into(),
@@ -23,6 +23,12 @@ fn base_args() -> Vec<String> {
         "http://127.0.0.1:1".into(),
         "--network-passphrase".into(),
         "Test SDF Network ; September 2015".into(),
+    ]
+}
+
+fn base_args() -> Vec<String> {
+    let mut args = network_args();
+    args.extend([
         "--registry-contract-id".into(),
         contract_id('A'),
         "--registrar-contract-id".into(),
@@ -37,7 +43,37 @@ fn base_args() -> Vec<String> {
         contract_id('F'),
         "--nft-contract-id".into(),
         contract_id('G'),
-    ]
+    ]);
+    args
+}
+
+fn args_for(contract_flags: &[(&str, char)]) -> Vec<String> {
+    let mut args = network_args();
+    for (flag, fill) in contract_flags {
+        args.push(format!("--{flag}").into());
+        args.push(contract_id(*fill));
+    }
+    args
+}
+
+fn registrar_args() -> Vec<String> {
+    args_for(&[("registrar-contract-id", 'B')])
+}
+
+fn resolver_args() -> Vec<String> {
+    args_for(&[("resolver-contract-id", 'C'), ("registry-contract-id", 'A')])
+}
+
+fn registry_args() -> Vec<String> {
+    args_for(&[("registry-contract-id", 'A')])
+}
+
+fn registry_resolver_args() -> Vec<String> {
+    args_for(&[("registry-contract-id", 'A'), ("resolver-contract-id", 'C')])
+}
+
+fn registrar_registry_args() -> Vec<String> {
+    args_for(&[("registrar-contract-id", 'B'), ("registry-contract-id", 'A')])
 }
 
 fn csv_rows(output: &[u8]) -> Vec<Vec<String>> {
@@ -81,13 +117,14 @@ fn root_and_subcommand_help_are_available() {
     ];
 
     for args in commands {
+        let is_root_help = args == vec!["--help"];
         let assert = bin()
             .args(args)
             .assert()
             .success()
             .stdout(predicate::str::contains("Usage:").or(predicate::str::contains("USAGE:")));
 
-        if args == vec!["--help"] {
+        if is_root_help {
             assert.stdout(predicate::str::contains("XLM Name Service CLI"));
         }
     }
@@ -95,7 +132,7 @@ fn root_and_subcommand_help_are_available() {
 
 #[test]
 fn register_emits_human_json_and_csv() {
-    let mut args = base_args();
+    let mut args = registrar_args();
     args.extend([
         "register".to_string(),
         "alice".to_string(),
@@ -113,7 +150,7 @@ fn register_emits_human_json_and_csv() {
     assert!(human_text.contains("Registration quote for alice.xlm:"));
     assert!(human_text.contains("SUCCESS: registered alice.xlm to"));
 
-    let mut json_args = base_args();
+    let mut json_args = registrar_args();
     json_args.extend([
         "--output".into(),
         "json".into(),
@@ -136,7 +173,7 @@ fn register_emits_human_json_and_csv() {
     assert!(json["transaction_hash"].is_string());
     assert!(json["fee_total"].is_number());
 
-    let mut csv_args = base_args();
+    let mut csv_args = registrar_args();
     csv_args.extend([
         "--output".into(),
         "csv".into(),
@@ -158,7 +195,7 @@ fn register_emits_human_json_and_csv() {
 
 #[test]
 fn no_color_flag_disables_ansi_sequences() {
-    let mut args = base_args();
+    let mut args = registrar_args();
     args.extend([
         "--no-color".into(),
         "register".into(),
@@ -182,7 +219,7 @@ fn no_color_flag_disables_ansi_sequences() {
 
 #[test]
 fn no_color_env_var_disables_ansi_sequences() {
-    let mut args = base_args();
+    let mut args = registrar_args();
     args.extend([
         "register".into(),
         "alice".into(),
@@ -206,7 +243,7 @@ fn no_color_env_var_disables_ansi_sequences() {
 
 #[test]
 fn resolve_emits_human_json_and_csv() {
-    let mut human_args = base_args();
+    let mut human_args = resolver_args();
     human_args.extend(["resolve".into(), "alice.xlm".into()]);
     let human = bin()
         .args(&human_args)
@@ -219,7 +256,7 @@ fn resolve_emits_human_json_and_csv() {
     assert!(human_text.contains("Name: alice.xlm"));
     assert!(human_text.contains("Address: GDRA"));
 
-    let mut json_args = base_args();
+    let mut json_args = resolver_args();
     json_args.extend([
         "--output".into(),
         "json".into(),
@@ -238,7 +275,7 @@ fn resolve_emits_human_json_and_csv() {
     assert!(json["address"].as_str().is_some());
     assert!(json["resolver"].as_str().is_some());
 
-    let mut csv_args = base_args();
+    let mut csv_args = resolver_args();
     csv_args.extend([
         "--output".into(),
         "csv".into(),
@@ -259,7 +296,7 @@ fn resolve_emits_human_json_and_csv() {
 
 #[test]
 fn whois_and_portfolio_support_machine_readable_formats() {
-    let mut whois_human_args = base_args();
+    let mut whois_human_args = registry_resolver_args();
     whois_human_args.extend(["whois".into(), "alice.xlm".into()]);
     let whois_human = bin()
         .args(&whois_human_args)
@@ -272,7 +309,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert!(whois_human.contains("alice.xlm"));
     assert!(whois_human.contains("Owner:"));
 
-    let mut whois_json_args = base_args();
+    let mut whois_json_args = registry_resolver_args();
     whois_json_args.extend([
         "--output".into(),
         "json".into(),
@@ -291,7 +328,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert_eq!(whois_json["network"], "testnet");
 
     let owner = account_address('J');
-    let mut portfolio_json_args = base_args();
+    let mut portfolio_json_args = registry_resolver_args();
     portfolio_json_args.extend([
         "--output".into(),
         "json".into(),
@@ -312,7 +349,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["owner"], owner);
 
-    let mut portfolio_human_args = base_args();
+    let mut portfolio_human_args = registry_resolver_args();
     portfolio_human_args.extend(["portfolio".into(), owner.clone()]);
     let portfolio_human = bin()
         .args(&portfolio_human_args)
@@ -325,7 +362,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
     assert!(portfolio_human.contains("Portfolio for"));
     assert!(portfolio_human.contains("alice.xlm"));
 
-    let mut portfolio_csv_args = base_args();
+    let mut portfolio_csv_args = registry_resolver_args();
     portfolio_csv_args.extend(["--output".into(), "csv".into(), "portfolio".into(), owner]);
     let portfolio_csv = bin()
         .args(&portfolio_csv_args)
@@ -340,7 +377,7 @@ fn whois_and_portfolio_support_machine_readable_formats() {
 
 #[test]
 fn transfer_and_renew_emit_structured_output() {
-    let mut transfer_json_args = base_args();
+    let mut transfer_json_args = registry_args();
     transfer_json_args.extend([
         "--output".into(),
         "json".into(),
@@ -360,7 +397,7 @@ fn transfer_and_renew_emit_structured_output() {
     assert_eq!(transfer_json["new_owner"], account_address('K'));
     assert_eq!(transfer_json["status"], "submitted");
 
-    let mut renew_csv_args = base_args();
+    let mut renew_csv_args = registrar_registry_args();
     renew_csv_args.extend([
         "--output".into(),
         "csv".into(),
@@ -387,7 +424,7 @@ fn missing_arguments_and_invalid_inputs_fail_cleanly() {
         .failure()
         .stderr(predicate::str::contains("Usage:").or(predicate::str::contains("USAGE:")));
 
-    let mut args = base_args();
+    let mut args = registry_args();
     args.extend([
         "transfer".into(),
         "alice.xlm".into(),
@@ -401,7 +438,7 @@ fn missing_arguments_and_invalid_inputs_fail_cleanly() {
         .stderr(predicate::str::contains("Suggestion:"))
         .stderr(predicate::str::contains("new_owner is invalid"));
 
-    let mut renew_args = base_args();
+    let mut renew_args = registrar_registry_args();
     renew_args.extend(["renew".into(), "notfound.xlm".into()]);
     bin()
         .args(&renew_args)

@@ -3,7 +3,7 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, Env, String, Vec,
+    Bytes, BytesN, Env, String, Vec,
 };
 use xlm_ns_common::soroban::{validate_base_name_soroban, validate_fqdn_soroban};
 use xlm_ns_registry::{NameState, RegistryContractClient};
@@ -52,7 +52,6 @@ pub enum SubdomainError {
 pub const CONTRACT_VERSION: u32 = 1;
 
 #[contractevent]
-#[contracttype]
 pub struct ContractUpgraded {
     pub old_version: u32,
     pub new_version: u32,
@@ -123,7 +122,7 @@ impl SubdomainContract {
 
     pub fn upgrade(
         env: Env,
-        new_wasm_hash: Bytes,
+        new_wasm_hash: BytesN<32>,
         _migration_data: Bytes,
     ) -> Result<(), SubdomainError> {
         let admin: Address = env
@@ -149,8 +148,8 @@ impl SubdomainContract {
         validate_base_name_soroban(&parent).map_err(|_| SubdomainError::Validation)?;
         let key = DataKey::Parent(parent.clone());
         if let Some(registry_client) = get_registry_client(&env) {
-            match registry_client.resolve(&parent, &env.ledger().timestamp()) {
-                Ok(entry) => {
+            match registry_client.try_resolve(&parent, &env.ledger().timestamp()) {
+                Ok(Ok(entry)) => {
                     if entry.owner != owner {
                         return Err(SubdomainError::Unauthorized);
                     }
@@ -163,7 +162,7 @@ impl SubdomainContract {
                         }
                     }
                 }
-                Err(_) => {
+                _ => {
                     if env.storage().persistent().has(&key) {
                         purge_parent_namespace(&env, &parent);
                     }
@@ -254,14 +253,20 @@ impl SubdomainContract {
             .persistent()
             .get(&DataKey::MaxDepth)
             .unwrap_or(3);
-        let label_byte_count = label.as_bytes().len();
-        let mut fqdn_byte_count = label_byte_count + 1 + parent.as_bytes().len();
+        let label_byte_count = label.len() as usize;
+        let parent_byte_count = parent.len() as usize;
+        let fqdn_byte_count = label_byte_count + 1 + parent_byte_count;
         let mut fqdn_bytes = [0u8; 256];
 
+        let mut label_buf = [0u8; 256];
+        label.copy_into_slice(&mut label_buf[..label_byte_count]);
+        let mut parent_buf = [0u8; 256];
+        parent.copy_into_slice(&mut parent_buf[..parent_byte_count]);
+
         if label_byte_count > 0 {
-            let mut depth = 1;
-            for byte in label.as_bytes() {
-                if byte == b'.' {
+            let mut depth = 1u32;
+            for i in 0..label_byte_count {
+                if label_buf[i] == b'.' {
                     depth += 1;
                 }
             }
@@ -271,15 +276,10 @@ impl SubdomainContract {
             }
         }
 
-        for (i, byte) in label.as_bytes().iter().enumerate() {
-            fqdn_bytes[i] = *byte;
-        }
-
+        fqdn_bytes[..label_byte_count].copy_from_slice(&label_buf[..label_byte_count]);
         fqdn_bytes[label_byte_count] = b'.';
-
-        for (i, byte) in parent.as_bytes().iter().enumerate() {
-            fqdn_bytes[label_byte_count + 1 + i] = *byte;
-        }
+        fqdn_bytes[label_byte_count + 1..fqdn_byte_count]
+            .copy_from_slice(&parent_buf[..parent_byte_count]);
 
         let fqdn = String::from_bytes(&env, &fqdn_bytes[..fqdn_byte_count]);
         let key = DataKey::Subdomain(fqdn.clone());

@@ -150,7 +150,7 @@ fn classify_sdk_error(
             docs: vec!["docs/sdk-integration-tests.md"],
             technical: technical_chain_or(err, message),
         },
-        SdkError::ContractError(code) => contract_error(*code, context, err),
+        SdkError::ContractError(code) => contract_error(code.clone(), context, err),
         SdkError::NetworkPassphraseMismatch {
             configured,
             rpc_reported,
@@ -297,7 +297,7 @@ fn classify_text(text: &str, context: &ErrorContext, err: Option<&Error>) -> Opt
     }
 
     if let Some(code) = extract_contract_code(text) {
-        return Some(contract_error(code, context, err));
+        return Some(contract_error_for_domain(context.domain, code, context, err, None));
     }
 
     if lower.contains("already registered") {

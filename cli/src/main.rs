@@ -79,7 +79,7 @@ struct Cli {
 }
 
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum MigrateCommands {
     /// Transform a JSON state file from one schema version to another.
     ///
@@ -146,10 +146,7 @@ enum MigrateCommands {
     },
 }
 
-#[derive(Subcommand)]
-
 #[derive(Subcommand, Clone)]
-
 enum Commands {
 
     /// Migrate Soroban contract storage safely (transform/verify; export/import stubbed)
@@ -589,8 +586,6 @@ async fn run() -> anyhow::Result<()> {
                 commands::migrate::run_import(cli.output, cli.dry_run, contract_id, file).await
             }
         },
-
-    match cli.command.clone() {
         Commands::Register {
 
             name,
@@ -601,9 +596,10 @@ async fn run() -> anyhow::Result<()> {
             commands::register::run_register(
                 config,
                 cli.output,
-                &name,
-                &owner,
+                name,
+                owner,
                 resolve_signer(signer)?,
+                interactive,
             )
             .await
         }
@@ -827,7 +823,7 @@ fn error_context(command: &Commands) -> error::ErrorContext {
     match command {
         Commands::Register { name, .. } => error::ErrorContext {
             domain: error::ErrorDomain::Registrar,
-            subject: Some(name.clone()),
+            subject: name.clone(),
             subject_kind: error::SubjectKind::Name,
             command: "register",
         },
@@ -986,6 +982,12 @@ fn error_context(command: &Commands) -> error::ErrorContext {
             subject_kind: error::SubjectKind::Unknown,
             command: "completions",
         },
+        Commands::Migrate { .. } => error::ErrorContext {
+            domain: error::ErrorDomain::General,
+            subject: None,
+            subject_kind: error::SubjectKind::Unknown,
+            command: "migrate",
+        },
     }
 }
 
@@ -1051,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn register_rejects_irrelevant_registry_flag() {
+    fn register_accepts_registry_flag() {
         let cmd = Commands::Register {
             name: Some("test.xlm".to_string()),
             owner: Some("GDRA111".to_string()),
@@ -1063,12 +1065,7 @@ mod tests {
             ..Default::default()
         };
         let result = validate_contract_policy(&cmd, &overrides, &config_with_all_contracts());
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("registry-contract-id"),
-            "expected registry-contract-id in: {msg}"
-        );
+        assert!(result.is_ok(), "registry-contract-id should be allowed for register");
     }
 
     #[test]
@@ -1113,7 +1110,7 @@ mod tests {
     // --- resolve ---
 
     #[test]
-    fn resolve_rejects_irrelevant_registry_flag() {
+    fn resolve_accepts_registry_flag() {
         let cmd = Commands::Resolve {
             name: "test.xlm".to_string(),
         };
@@ -1122,13 +1119,7 @@ mod tests {
             ..Default::default()
         };
         let result = validate_contract_policy(&cmd, &overrides, &config_with_all_contracts());
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("registry-contract-id"),
-            "expected registry-contract-id in: {msg}"
-        );
-        assert!(msg.contains("resolve"), "expected 'resolve' in: {msg}");
+        assert!(result.is_ok(), "registry-contract-id should be allowed for resolve");
     }
 
     #[test]
@@ -1190,7 +1181,7 @@ mod tests {
     // --- quote ---
 
     #[test]
-    fn quote_rejects_irrelevant_registry_flag() {
+    fn quote_accepts_registry_flag() {
         let cmd = Commands::Quote {
             name: "test".to_string(),
             years: 1,
@@ -1200,13 +1191,7 @@ mod tests {
             ..Default::default()
         };
         let result = validate_contract_policy(&cmd, &overrides, &config_with_all_contracts());
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("registry-contract-id"),
-            "expected registry-contract-id in: {msg}"
-        );
-        assert!(msg.contains("quote"), "expected 'quote' in: {msg}");
+        assert!(result.is_ok(), "registry-contract-id should be allowed for quote");
     }
 
     // --- availability ---
@@ -1293,20 +1278,24 @@ fn validate_contract_policy(
     {
         Commands::Register { .. } => (
             "register",
-            &[ContractKind::Registrar],
+            &[ContractKind::Registrar, ContractKind::Registry],
             &[ContractKind::Registrar],
         ),
         Commands::Resolve { .. } => (
             "resolve",
-            &[ContractKind::Resolver],
+            &[ContractKind::Resolver, ContractKind::Registry],
             &[ContractKind::Resolver],
         ),
         Commands::ReverseResolve { .. } => (
             "reverse-resolve",
-            &[ContractKind::Resolver],
+            &[ContractKind::Resolver, ContractKind::Registry],
             &[ContractKind::Resolver],
         ),
-        Commands::Text(_) => ("text", &[ContractKind::Resolver], &[ContractKind::Resolver]),
+        Commands::Text(_) => (
+            "text",
+            &[ContractKind::Resolver, ContractKind::Registry],
+            &[ContractKind::Resolver],
+        ),
         Commands::Transfer { .. } => (
             "transfer",
             &[ContractKind::Registry],
@@ -1314,22 +1303,30 @@ fn validate_contract_policy(
         ),
         Commands::Renew { .. } => (
             "renew",
-            &[ContractKind::Registrar],
+            &[ContractKind::Registrar, ContractKind::Registry],
             &[ContractKind::Registrar],
         ),
         Commands::Auction(_) => (
             "auction",
-            &[ContractKind::Auction],
+            &[ContractKind::Auction, ContractKind::Registry],
             &[ContractKind::Auction],
         ),
         Commands::Completions(_) => ("completions", &[], &[]),
-        Commands::Bridge(_) => ("bridge", &[ContractKind::Bridge], &[ContractKind::Bridge]),
+        Commands::Bridge(_) => (
+            "bridge",
+            &[ContractKind::Bridge, ContractKind::Registry],
+            &[ContractKind::Bridge],
+        ),
         Commands::Subdomain(_) => (
             "subdomain",
-            &[ContractKind::Subdomain],
+            &[ContractKind::Subdomain, ContractKind::Registry],
             &[ContractKind::Subdomain],
         ),
-        Commands::Nft(_) => ("nft", &[ContractKind::Nft], &[ContractKind::Nft]),
+        Commands::Nft(_) => (
+            "nft",
+            &[ContractKind::Nft, ContractKind::Registry],
+            &[ContractKind::Nft],
+        ),
         Commands::Config(_) => ("config", &[], &[]),
         Commands::Watch(_) => ("watch", &[ContractKind::Registry], &[]),
         Commands::Whois { .. } => (
@@ -1345,7 +1342,7 @@ fn validate_contract_policy(
         // Quote and Availability are read-only; registrar is needed for pricing.
         Commands::Quote { .. } => (
             "quote",
-            &[ContractKind::Registrar],
+            &[ContractKind::Registrar, ContractKind::Registry],
             &[ContractKind::Registrar],
         ),
         Commands::Availability { .. } => ("availability", &[ContractKind::Registry], &[]),
@@ -1370,12 +1367,12 @@ fn validate_contract_policy(
         Commands::Bulk(sub) => match sub {
             BulkCommands::Register { .. } => (
                 "bulk register",
-                &[ContractKind::Registrar],
+                &[ContractKind::Registrar, ContractKind::Registry],
                 &[ContractKind::Registrar],
             ),
             BulkCommands::Renew { .. } => (
                 "bulk renew",
-                &[ContractKind::Registrar],
+                &[ContractKind::Registrar, ContractKind::Registry],
                 &[ContractKind::Registrar],
             ),
         },

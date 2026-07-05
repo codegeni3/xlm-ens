@@ -13,9 +13,9 @@ mod tests {
 
     fn setup_with_subdomain(depth: u32) -> (
         Env,
-        ResolverContractClient,
-        RegistryContractClient,
-        SubdomainContractClient,
+        ResolverContractClient<'static>,
+        RegistryContractClient<'static>,
+        SubdomainContractClient<'static>,
         Address,
         Address,
     ) {
@@ -146,7 +146,7 @@ mod tests {
         );
 
         resolver.set_record(&parent, &owner, &address, &now);
-        resolver.set_wildcard_resolution(&parent, &owner, &false, &now + 1);
+        resolver.set_wildcard_resolution(&parent, &owner, &false, &(now + 1));
 
         assert_eq!(resolver.resolve(&child), None);
         let exact = resolver.resolve(&parent).unwrap();
@@ -184,7 +184,7 @@ mod tests {
         );
 
         resolver.set_record(&parent, &owner, &parent_address, &now);
-        resolver.set_record(&child, &owner, &child_address, &now + 1);
+        resolver.set_record(&child, &owner, &child_address, &(now + 1));
 
         let record = resolver.resolve(&child).unwrap();
         assert_eq!(
@@ -254,7 +254,7 @@ mod tests {
         resolver.set_record(&name, &old_owner, &old_address, &now);
         resolver.set_primary_name(&old_address, &old_owner, &name);
 
-        registry.transfer(&name, &old_owner, &new_owner, &now + 10);
+        registry.transfer(&name, &old_owner, &new_owner, &(now + 10));
 
         assert_eq!(resolver.reverse(&old_address), None);
         assert_eq!(resolver.reverse(&new_address), None);
@@ -292,7 +292,7 @@ mod tests {
         );
 
         resolver.set_record(&name, &old_owner, &old_address, &now);
-        registry.transfer(&name, &old_owner, &new_owner, &now + 10);
+        registry.transfer(&name, &old_owner, &new_owner, &(now + 10));
 
         env.as_contract(&resolver_id, || {
             env.storage()

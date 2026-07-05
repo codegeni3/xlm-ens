@@ -118,7 +118,7 @@ impl BridgeContract {
 
         env.events().publish(
             (symbol_short!("bridge"), symbol_short!("upgraded")),
-            (current_version, target_version, admin),
+            (current_version, target_version, admin.clone()),
         );
         ContractUpgraded {
             old_version: current_version,

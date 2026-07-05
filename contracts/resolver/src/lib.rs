@@ -3,7 +3,7 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, Env, Error, IntoVal, Map, String, Symbol, Vec,
+    Bytes, BytesN, Env, Error, IntoVal, Map, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::validate_fqdn_soroban;
 use xlm_ns_common::RegistryEntry;
@@ -101,7 +101,6 @@ pub enum ResolverError {
 
 /// Emitted when a forward record (name → address) is created or updated.
 #[contractevent]
-#[contracttype]
 pub struct ForwardUpdated {
     pub name: String,
     pub address: String,
@@ -111,7 +110,6 @@ pub struct ForwardUpdated {
 
 /// Emitted when a reverse mapping (address → name) is written.
 #[contractevent]
-#[contracttype]
 pub struct ReverseUpdated {
     pub address: String,
     pub name: String,
@@ -119,7 +117,6 @@ pub struct ReverseUpdated {
 
 /// Emitted when a primary name is set for an address.
 #[contractevent]
-#[contracttype]
 pub struct PrimaryNameSet {
     pub address: String,
     pub name: String,
@@ -127,7 +124,6 @@ pub struct PrimaryNameSet {
 
 /// Emitted when a text record is created or updated.
 #[contractevent]
-#[contracttype]
 pub struct TextRecordUpdated {
     pub name: String,
     pub key: String,
@@ -137,7 +133,6 @@ pub struct TextRecordUpdated {
 
 /// Emitted when a record (and its reverse/primary) is removed.
 #[contractevent]
-#[contracttype]
 pub struct RecordRemoved {
     pub name: String,
     pub former_address: Option<String>,
@@ -145,7 +140,6 @@ pub struct RecordRemoved {
 
 /// Emitted when the contract is upgraded.
 #[contractevent]
-#[contracttype]
 pub struct ContractUpgraded {
     pub old_version: u32,
     pub new_version: u32,
@@ -223,17 +217,15 @@ impl ResolverContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
-        env.events().publish(
-            (symbol_short!("resolver"), symbol_short!("upgraded")),
-            ContractUpgraded {
-                old_version: current_version,
-                new_version: target_version,
-                admin,
-            },
-        );
+        ContractUpgraded {
+            old_version: current_version,
+            new_version: target_version,
+            admin,
+        }
+        .publish(&env);
 
         env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.to_bytes());
+            .update_current_contract_wasm(new_wasm_hash);
 
         Ok(())
     }
@@ -491,11 +483,7 @@ impl ResolverContract {
     /// stale reverse and primary mappings for the previous owner do not linger.
     pub fn clear_reverse_record(env: Env, name: String, previous_owner: Address) {
         let registry = get_registry(&env).expect("resolver not initialized");
-        assert_eq!(
-            env.caller(),
-            registry,
-            "only the registry may sync reverse state"
-        );
+        registry.require_auth();
 
         let previous_owner_key = previous_owner.to_string();
         let reverse_key = DataKey::Reverse(previous_owner_key.clone());
@@ -830,9 +818,25 @@ fn resolve_with_fallback(env: &Env, name: &String) -> Option<(ResolutionRecord, 
 }
 
 fn parent_name(env: &Env, name: &String) -> Option<String> {
-    let name_str = name.to_string();
-    let (parent, _) = name_str.split_once('.')?;
-    Some(String::from_str(env, parent))
+    // Maximum DNS name length is 253 characters; use a fixed-size buffer
+    // to avoid alloc in no_std/wasm context.
+    const MAX_NAME_LEN: usize = 256;
+    let len = name.len() as usize;
+    if len == 0 || len > MAX_NAME_LEN {
+        return None;
+    }
+    let mut buf = [0u8; MAX_NAME_LEN];
+    name.copy_into_slice(&mut buf[..len]);
+    // Find the first '.' to split off the leftmost label
+    let dot_pos = buf[..len].iter().position(|&b| b == b'.')?;
+    // The parent is everything after the dot
+    let parent_bytes = &buf[dot_pos + 1..len];
+    if parent_bytes.is_empty() {
+        return None;
+    }
+    // SAFETY: copy_into_slice copies UTF-8 bytes from a soroban String
+    let parent_str = core::str::from_utf8(parent_bytes).ok()?;
+    Some(String::from_str(env, parent_str))
 }
 
 fn fallback_depth_limit(env: &Env) -> u32 {

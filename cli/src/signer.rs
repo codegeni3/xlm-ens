@@ -103,7 +103,7 @@ impl SignerProfile {
 
 #[derive(Debug, Clone)]
 pub struct SigningKey {
-    pub keypair: stellar_sdk::SecretKey,
+    pub keypair: stellar_sdk::Keypair,
     pub public_address: String,
 }
 
@@ -124,8 +124,8 @@ impl std::error::Error for SigningKeyError {}
 
 pub fn load_signing_key(secret: &str) -> Result<SigningKey, SigningKeyError> {
     let keypair =
-        stellar_sdk::SecretKey::from_str(secret).map_err(|_| SigningKeyError::InvalidSecret)?;
-    let public_address = keypair.public_key().to_string();
+        stellar_sdk::Keypair::from_secret_key(secret).map_err(|_| SigningKeyError::InvalidSecret)?;
+    let public_address = keypair.public_key();
     Ok(SigningKey {
         keypair,
         public_address,
