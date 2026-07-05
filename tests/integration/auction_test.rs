@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(deprecated)]
 mod auction_integration {
     use soroban_sdk::token;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};

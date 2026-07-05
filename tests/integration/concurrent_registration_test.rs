@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use soroban_sdk::token::{Client, StellarAssetClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 use xlm_ns_auction::{AuctionContract, AuctionContractClient};
@@ -123,7 +124,7 @@ fn test_concurrent_registration_same_ledger() {
 fn test_registration_racing_against_auction_settlement() {
     // Setup environment with registrar, registry, auction, and token
     let (env, registrar, registry) = setup_registrar_registry();
-    let (_, auction_client, token_admin, token_asset, token_client) = setup_auction_and_token();
+    let (_, auction_client, _token_admin, token_asset, token_client) = setup_auction_and_token();
 
     let auction_winner = Address::generate(&env);
     let auction_loser = Address::generate(&env); // This user will lose the auction but is needed for Vickrey pricing
@@ -178,15 +179,12 @@ fn test_registration_racing_against_auction_settlement() {
     let settlement = auction_client.settle(&name, &time.now);
 
     // Because the name was taken, the auction is considered unsold from the winner's perspective.
-    match settlement {
-        Some(s) => {
-            assert!(!s.sold, "Settlement should indicate the name was not sold");
-            assert_eq!(
-                s.winner, None,
-                "There should be no winner as the name was already taken"
-            );
-        }
-        None => {} // No settlement returned means the auction was not settled
+    if let Some(s) = settlement {
+        assert!(!s.sold, "Settlement should indicate the name was not sold");
+        assert_eq!(
+            s.winner, None,
+            "There should be no winner as the name was already taken"
+        );
     }
 
     // Verify the auction winner was fully refunded.

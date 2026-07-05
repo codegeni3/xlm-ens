@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(deprecated)]
 pub mod expiry;
 pub mod pricing;
 mod test;
@@ -230,6 +231,7 @@ impl RegistrarContract {
     // Release policy: registrations are only released through the normal
     // expiry-plus-grace lifecycle. This contract does not expose an admin
     // recovery or forced-release override.
+    #[allow(deprecated)]
     pub fn reserve_label(env: Env, label: String) -> Result<(), RegistrarError> {
         let admin: Address = env
             .storage()
@@ -255,6 +257,7 @@ impl RegistrarContract {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn load_reserved_manifest(env: Env, labels: Vec<String>) -> Result<u32, RegistrarError> {
         let admin: Address = env
             .storage()
@@ -353,6 +356,7 @@ impl RegistrarContract {
         pricing::PRICING_POLICY_VERSION
     }
 
+    #[allow(deprecated)]
     pub fn register(
         env: Env,
         label: String,
@@ -472,6 +476,7 @@ impl RegistrarContract {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn renew(
         env: Env,
         name: String,
@@ -674,6 +679,7 @@ impl RegistrarContract {
     }
 
     /// Governance function: Set rate limit configuration
+    #[allow(deprecated)]
     pub fn set_rate_limit_config(
         env: Env,
         window_size_seconds: u64,
@@ -716,6 +722,7 @@ impl RegistrarContract {
     ///
     /// Affects grace calculations for new registrations and renewals. Existing
     /// registrations keep their stored `grace_period_ends_at` timestamps.
+    #[allow(deprecated)]
     pub fn set_grace_period(env: Env, grace_period_seconds: u64) -> Result<(), RegistrarError> {
         let admin: Address = env
             .storage()
@@ -724,9 +731,7 @@ impl RegistrarContract {
             .ok_or(RegistrarError::NotInitialized)?;
         admin.require_auth();
 
-        if grace_period_seconds < MIN_GRACE_PERIOD_SECONDS
-            || grace_period_seconds > MAX_GRACE_PERIOD_SECONDS
-        {
+        if !(MIN_GRACE_PERIOD_SECONDS..=MAX_GRACE_PERIOD_SECONDS).contains(&grace_period_seconds) {
             return Err(RegistrarError::Validation);
         }
 
@@ -751,6 +756,7 @@ impl RegistrarContract {
     ///
     /// Uses standard renewal pricing. Rejects renewals while the name is still
     /// active or after the grace window has ended.
+    #[allow(deprecated)]
     pub fn extend_during_grace(
         env: Env,
         name: String,
@@ -849,6 +855,7 @@ impl RegistrarContract {
     }
 
     /// Governance function: Whitelist an address to bypass rate limiting
+    #[allow(deprecated)]
     pub fn whitelist_address(env: Env, address: Address) -> Result<(), RegistrarError> {
         let admin: Address = env
             .storage()
@@ -869,6 +876,7 @@ impl RegistrarContract {
     }
 
     /// Governance function: Remove address from whitelist
+    #[allow(deprecated)]
     pub fn remove_whitelist_address(env: Env, address: Address) -> Result<(), RegistrarError> {
         let admin: Address = env
             .storage()
@@ -905,6 +913,7 @@ impl RegistrarContract {
 }
 
 /// Check if an address is within rate limits for a given time window
+#[allow(deprecated)]
 fn check_rate_limit(env: &Env, address: &Address, now_unix: u64) -> Result<(), RegistrarError> {
     // Check if address is whitelisted (bypass rate limit)
     if env

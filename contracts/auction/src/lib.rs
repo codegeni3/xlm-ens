@@ -137,6 +137,7 @@ impl AuctionContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
+        #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("auction"), symbol_short!("upgraded")),
             (current_version, target_version, admin.clone()),
@@ -282,7 +283,7 @@ impl AuctionContract {
             }
 
             let token = token::Client::new(&env, &auction.asset);
-            token.transfer(&bidder, &env.current_contract_address(), &(amount as i128));
+            token.transfer(&bidder, env.current_contract_address(), &(amount as i128));
 
             auction.bids.push_back(Bid {
                 bidder,
@@ -459,11 +460,11 @@ fn filter_index(
         if !keep(env, &name) {
             continue;
         }
-        if matched >= offset && (emitted.len() as u32) < capped_limit {
+        if matched >= offset && emitted.len() < capped_limit {
             emitted.push_back(name);
         }
         matched += 1;
-        if (emitted.len() as u32) >= capped_limit {
+        if emitted.len() >= capped_limit {
             break;
         }
         let _ = i;

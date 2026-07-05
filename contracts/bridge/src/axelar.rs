@@ -1,7 +1,5 @@
 extern crate alloc;
 use alloc::string::String;
-use alloc::vec::Vec;
-use core::fmt::Write;
 
 pub fn build_forward_gmp_message(name: &[u8], destination_chain: &[u8], resolver: &[u8]) -> String {
     let mut buf = String::new();

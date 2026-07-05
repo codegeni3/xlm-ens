@@ -706,7 +706,7 @@ mod tests {
 
         use crate::{NftContract, NftContractClient};
 
-        fn setup(env: &Env) -> (NftContractClient, RegistryContractClient, Address) {
+        fn setup<'a>(env: &'a Env) -> (NftContractClient<'a>, RegistryContractClient<'a>, Address) {
             env.mock_all_auths();
             let admin = Address::generate(env);
 

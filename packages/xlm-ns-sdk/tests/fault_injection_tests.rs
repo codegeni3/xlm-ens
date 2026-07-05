@@ -1,13 +1,8 @@
 #[cfg(test)]
 mod fault_injection_tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
     use stellar_rpc_client::Client;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
-    use xlm_ns_sdk::config::ClientConfig;
     use xlm_ns_sdk::errors::SdkError;
     use xlm_ns_sdk::network;
 
@@ -92,7 +87,7 @@ mod fault_injection_tests {
 
     #[tokio::test]
     async fn test_partial_response() {
-        let mut mock_server = MockServer::start().await;
+        let mock_server = MockServer::start().await;
 
         // Return truncated JSON response (missing closing braces)
         let partial_responder = PartialJsonResponder::new(
@@ -102,7 +97,7 @@ mod fault_injection_tests {
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(partial_responder)
-            .mount(&mut mock_server)
+            .mount(&mock_server)
             .await;
 
         let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
@@ -131,7 +126,7 @@ mod fault_injection_tests {
 
     #[tokio::test]
     async fn test_connection_reset_simulation() {
-        let mut mock_server = MockServer::start().await;
+        let mock_server = MockServer::start().await;
 
         // Simulate connection reset by sending partial response
         let valid_response = jsonrpc_success_response().to_string();
@@ -152,7 +147,7 @@ mod fault_injection_tests {
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(connection_reset_responder)
-            .mount(&mut mock_server)
+            .mount(&mock_server)
             .await;
 
         let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
@@ -177,13 +172,13 @@ mod fault_injection_tests {
 
     #[tokio::test]
     async fn test_http_500_error() {
-        let mut mock_server = MockServer::start().await;
+        let mock_server = MockServer::start().await;
 
         // Return HTTP 500 Internal Server Error
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(ResponseTemplate::new(500))
-            .mount(&mut mock_server)
+            .mount(&mock_server)
             .await;
 
         let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
@@ -209,13 +204,13 @@ mod fault_injection_tests {
 
     #[tokio::test]
     async fn test_http_503_service_unavailable() {
-        let mut mock_server = MockServer::start().await;
+        let mock_server = MockServer::start().await;
 
         // Return HTTP 503 Service Unavailable (should be retryable)
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(ResponseTemplate::new(503))
-            .mount(&mut mock_server)
+            .mount(&mock_server)
             .await;
 
         let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");
@@ -241,7 +236,7 @@ mod fault_injection_tests {
 
     #[tokio::test]
     async fn test_rate_limit_429_error() {
-        let mut mock_server = MockServer::start().await;
+        let mock_server = MockServer::start().await;
 
         // Return HTTP 429 Too Many Requests
         let mut response = ResponseTemplate::new(429);
@@ -250,7 +245,7 @@ mod fault_injection_tests {
         Mock::given(method("POST"))
             .and(path("/"))
             .respond_with(response)
-            .mount(&mut mock_server)
+            .mount(&mock_server)
             .await;
 
         let http_client = Client::new(&mock_server.uri()).expect("Failed to create HTTP client");

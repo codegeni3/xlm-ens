@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(deprecated)]
 mod test;
 
 use soroban_sdk::{
@@ -99,7 +100,7 @@ pub enum ResolverError {
 // #141: Resolver events
 // -------------------------------------------------------------------
 
-/// Emitted when a forward record (name → address) is created or updated.
+/// Emitted when a forward record (name -> address) is created or updated.
 #[contractevent]
 pub struct ForwardUpdated {
     pub name: String,
@@ -108,7 +109,7 @@ pub struct ForwardUpdated {
     pub updated_at: u64,
 }
 
-/// Emitted when a reverse mapping (address → name) is written.
+/// Emitted when a reverse mapping (address -> name) is written.
 #[contractevent]
 pub struct ReverseUpdated {
     pub address: String,
@@ -229,6 +230,7 @@ impl ResolverContract {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn set_record(
         env: Env,
         name: String,
@@ -320,6 +322,7 @@ impl ResolverContract {
     }
 
     // Issue #317: Add multi-chain address setter
+    #[allow(deprecated)]
     pub fn set_address(
         env: Env,
         name: String,
@@ -377,6 +380,7 @@ impl ResolverContract {
             .and_then(|record| record.addresses.get(chain))
     }
 
+    #[allow(deprecated)]
     pub fn set_text_record(
         env: Env,
         name: String,
@@ -414,6 +418,7 @@ impl ResolverContract {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn set_primary_name(
         env: Env,
         address: String,
@@ -444,6 +449,7 @@ impl ResolverContract {
         Ok(())
     }
 
+    #[allow(deprecated)]
     pub fn remove_record(env: Env, name: String, caller: Address) -> Result<(), ResolverError> {
         caller.require_auth();
         let record = get_record(&env, &name)?;
@@ -620,6 +626,7 @@ impl ResolverContract {
     // contract invocation.  Auth is checked once for the whole batch.
     // Size is capped at MAX_BATCH_OPS to bound resource usage.
     // -------------------------------------------------------------------
+    #[allow(deprecated)]
     pub fn batch_set(
         env: Env,
         name: String,
@@ -808,9 +815,7 @@ fn resolve_with_fallback(env: &Env, name: &String) -> Option<(ResolutionRecord, 
             return None;
         }
 
-        let Some(parent) = parent_name(env, &current) else {
-            return None;
-        };
+        let parent = parent_name(env, &current)?;
         current = parent;
         hops += 1;
     }
@@ -909,7 +914,7 @@ fn put_record(env: &Env, name: &String, record: &ResolutionRecord) {
 /// Issue #314: Validate a text-record key.
 ///
 /// Rules:
-/// - Length: 1–64 bytes (inclusive).
+/// - Length: 1-64 bytes (inclusive).
 /// - Characters: lowercase ASCII letters `a-z`, digits `0-9`, dot `.`,
 ///   dash `-`, or underscore `_`.
 /// - Namespace convention (e.g. `com.twitter`, `org.did`) is allowed via dots.

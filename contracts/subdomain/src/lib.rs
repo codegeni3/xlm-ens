@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(deprecated)]
 mod test;
 
 use soroban_sdk::{
@@ -265,8 +266,8 @@ impl SubdomainContract {
 
         if label_byte_count > 0 {
             let mut depth = 1u32;
-            for i in 0..label_byte_count {
-                if label_buf[i] == b'.' {
+            for &byte in &label_buf[..label_byte_count] {
+                if byte == b'.' {
                     depth += 1;
                 }
             }
@@ -458,7 +459,7 @@ fn get_subdomain(env: &Env, fqdn: &String) -> Result<SubdomainRecord, SubdomainE
         .ok_or(SubdomainError::NotFound)
 }
 
-fn get_registry_client(env: &Env) -> Option<RegistryContractClient> {
+fn get_registry_client<'a>(env: &'a Env) -> Option<RegistryContractClient<'a>> {
     env.storage()
         .instance()
         .get::<_, Address>(&DataKey::RegistryContract)
@@ -559,10 +560,12 @@ fn remove_owner_subdomain(env: &Env, owner: &Address, fqdn: &String) {
     }
 }
 
+#[allow(dead_code)]
 fn migrate(from_version: u32, to_version: u32, _data: &Bytes) {
     let _ = (from_version, to_version);
 }
 
+#[allow(dead_code)]
 fn decode_target_version(data: &Bytes) -> u32 {
     if data.len() < 4 {
         return CONTRACT_VERSION + 1;

@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(deprecated, clippy::too_many_arguments)]
 mod test;
 
 use soroban_sdk::{
@@ -679,7 +680,7 @@ fn remove_lock(env: &Env, name: &String) -> Option<NameLock> {
     Some(lock)
 }
 
-fn get_nft_client(env: &Env) -> Option<NftClient> {
+fn get_nft_client<'a>(env: &'a Env) -> Option<NftClient<'a>> {
     env.storage()
         .instance()
         .get::<_, Address>(&DataKey::NftContract)

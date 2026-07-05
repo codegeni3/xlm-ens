@@ -116,6 +116,7 @@ impl BridgeContract {
             .persistent()
             .set(&DataKey::ContractVersion, &target_version);
 
+        #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("bridge"), symbol_short!("upgraded")),
             (current_version, target_version, admin.clone()),
@@ -147,7 +148,7 @@ impl BridgeContract {
             .get::<_, SupportedChain>(&DataKey::SupportedChain(chain.clone()))
             .ok_or(BridgeError::UnsupportedChain)?;
 
-        if supported.resolver_address.len() == 0 {
+        if supported.resolver_address.is_empty() {
             return Err(BridgeError::Validation);
         }
 
@@ -177,7 +178,7 @@ impl BridgeContract {
         admin.require_auth();
 
         validate_chain_name_soroban(&chain_id).map_err(|_| BridgeError::Validation)?;
-        if resolver_address.len() == 0 {
+        if resolver_address.is_empty() {
             return Err(BridgeError::Validation);
         }
 
@@ -314,7 +315,7 @@ impl BridgeContract {
         primary_name: String,
         chain: String,
     ) -> Result<String, BridgeError> {
-        if address.len() == 0 || primary_name.len() == 0 {
+        if address.is_empty() || primary_name.is_empty() {
             return Err(BridgeError::Validation);
         }
         validate_fqdn_soroban(&primary_name).map_err(|_| BridgeError::Validation)?;
@@ -339,6 +340,7 @@ impl BridgeContract {
     }
 }
 
+#[allow(dead_code)]
 fn target_for_chain(env: &Env, chain: &String) -> Option<BridgeRoute> {
     let base = String::from_str(env, "base");
     let ethereum = String::from_str(env, "ethereum");

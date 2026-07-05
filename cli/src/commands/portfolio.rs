@@ -1,7 +1,6 @@
 use crate::config::NetworkConfig;
 use crate::export;
-use crate::output::{emit_error, print_human, print_human_err, OutputFormat};
-use serde_json::json;
+use crate::output::{print_human, print_human_err, OutputFormat};
 use xlm_ns_sdk::client::XlmNsClient;
 use xlm_ns_sdk::errors::SdkError;
 use xlm_ns_sdk::types::{RegistryEntry, ResolutionResult};

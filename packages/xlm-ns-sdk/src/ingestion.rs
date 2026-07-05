@@ -626,6 +626,7 @@ impl<T> RpcLedgersRemoteSource<T> {
         })
     }
 
+    #[allow(dead_code)]
     fn map_ledger(&self, ledger: Ledger) -> Result<IngestedLedger<T>, SdkError> {
         (self.mapper)(ledger)
     }

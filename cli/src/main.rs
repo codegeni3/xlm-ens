@@ -1,3 +1,4 @@
+#![allow(clippy::items_after_test_module)]
 mod commands;
 mod config;
 mod error;
@@ -10,7 +11,7 @@ use clap::{Parser, Subcommand};
 use commands::completions::CompletionCommand;
 use commands::watch::WatchCommand;
 use config::{load_config, ContractKind, ContractOverrides, Network, ResolveOptions};
-use output::{configure as configure_output, print_human_err, OutputFormat};
+use output::{configure as configure_output, OutputFormat};
 use signer::{load_profile, SignerProfile};
 use std::path::PathBuf;
 use std::process;

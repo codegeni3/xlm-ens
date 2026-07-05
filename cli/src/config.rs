@@ -14,6 +14,7 @@ pub enum Network {
 }
 
 impl Network {
+    #[allow(dead_code)]
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
             "testnet" => Some(Self::Testnet),

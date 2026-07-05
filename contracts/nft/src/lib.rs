@@ -95,6 +95,7 @@ impl NftContract {
             .unwrap_or(CONTRACT_VERSION)
     }
 
+    #[allow(deprecated)]
     pub fn upgrade(
         env: Env,
         new_wasm_hash: BytesN<32>,
@@ -290,7 +291,7 @@ impl NftContract {
         // Update the registry to keep ownership in sync
         if let Ok(registry) = get_registry(&env) {
             let _now_unix = env.ledger().timestamp();
-            let _ = env.invoke_contract::<()>(
+            env.invoke_contract::<()>(
                 &registry,
                 &Symbol::new(&env, "update_owner"),
                 (token_id.clone(), new_owner).into_val(&env),
@@ -322,7 +323,7 @@ impl NftContract {
         // Update the registry to keep ownership in sync
         if let Ok(registry) = get_registry(&env) {
             let _now_unix = env.ledger().timestamp();
-            let _ = env.invoke_contract::<()>(
+            env.invoke_contract::<()>(
                 &registry,
                 &Symbol::new(&env, "update_owner"),
                 (token_id.clone(), recipient).into_val(&env),

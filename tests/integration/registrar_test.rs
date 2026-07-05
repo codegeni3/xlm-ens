@@ -13,6 +13,7 @@ impl TimeHelper {
     pub fn advance(&mut self, seconds: u64) {
         self.now += seconds;
     }
+    #[allow(dead_code)]
     pub fn future(&self, seconds: u64) -> u64 {
         self.now + seconds
     }
@@ -105,7 +106,7 @@ fn unauthorized_renewal_fails() {
     let registrar_id = env.register(RegistrarContract, ());
 
     let registrar = RegistrarContractClient::new(&env, &registrar_id);
-    let registry = RegistryContractClient::new(&env, &registry_id);
+    let _registry = RegistryContractClient::new(&env, &registry_id);
 
     registrar.initialize(&registry_id, &Address::generate(&env));
 

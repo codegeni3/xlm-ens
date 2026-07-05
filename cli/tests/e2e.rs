@@ -1,4 +1,3 @@
-use assert_cmd::prelude::*;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
@@ -26,6 +25,7 @@ fn network_args() -> Vec<String> {
     ]
 }
 
+#[allow(dead_code)]
 fn base_args() -> Vec<String> {
     let mut args = network_args();
     args.extend([
@@ -50,7 +50,7 @@ fn base_args() -> Vec<String> {
 fn args_for(contract_flags: &[(&str, char)]) -> Vec<String> {
     let mut args = network_args();
     for (flag, fill) in contract_flags {
-        args.push(format!("--{flag}").into());
+        args.push(format!("--{flag}"));
         args.push(contract_id(*fill));
     }
     args

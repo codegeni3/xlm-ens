@@ -1,6 +1,5 @@
 use crate::config::NetworkConfig;
 use crate::signer::load_signing_key;
-use futures::future::join_all;
 use regex::Regex;
 use reqwest::Client;
 use serde::Serialize;

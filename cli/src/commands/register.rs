@@ -107,7 +107,7 @@ pub async fn run_register(
         output,
         client.register(RegistrationRequest {
             label: label.clone(),
-            owner: owner.into(),
+            owner,
             duration_years,
             signer: signer_name.clone(),
         }),
@@ -188,6 +188,7 @@ fn prompt_registration_inputs(
     Ok((name, owner))
 }
 
+#[allow(clippy::redundant_closure)]
 fn prompt_text<F>(label: &str, existing: Option<String>, validate: F) -> anyhow::Result<String>
 where
     F: Fn(&str) -> anyhow::Result<String>,

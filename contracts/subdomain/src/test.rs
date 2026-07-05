@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     extern crate std;
 

@@ -101,6 +101,7 @@ impl SignerProfile {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SigningKey {
     pub keypair: stellar_sdk::Keypair,

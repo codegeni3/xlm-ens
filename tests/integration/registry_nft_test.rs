@@ -18,6 +18,7 @@ mod registry_nft_integration {
         pub fn advance(&mut self, seconds: u64) {
             self.now += seconds;
         }
+        #[allow(dead_code)]
         pub fn future(&self, seconds: u64) -> u64 {
             self.now + seconds
         }
@@ -61,7 +62,7 @@ mod registry_nft_integration {
         let new_owner = Address::generate(&env);
         let label = String::from_str(&env, "test");
         let name = String::from_str(&env, "test.xlm");
-        let mut time = TimeHelper::new(1_000_000);
+        let time = TimeHelper::new(1_000_000);
 
         // Register a name
         let quote = registrar.quote_registration(&label, &1, &time.now);
@@ -85,7 +86,7 @@ mod registry_nft_integration {
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "test");
         let name = String::from_str(&env, "test.xlm");
-        let mut time = TimeHelper::new(1_000_000);
+        let time = TimeHelper::new(1_000_000);
 
         // Register a name
         let quote = registrar.quote_registration(&label, &1, &time.now);
@@ -103,7 +104,7 @@ mod registry_nft_integration {
 
     #[test]
     fn renewal_flow() {
-        let (env, registrar, registry, nft, _admin) = setup_env();
+        let (env, registrar, _registry, nft, _admin) = setup_env();
         let owner = Address::generate(&env);
         let label = String::from_str(&env, "test");
         let name = String::from_str(&env, "test.xlm");

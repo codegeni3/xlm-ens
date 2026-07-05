@@ -46,6 +46,7 @@ pub struct TransformArgs {
     pub to_version: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifyArgs {
     pub strict: bool,
@@ -315,7 +316,7 @@ pub async fn run_import(
     let total_entries = state.scopes.len();
     let batch_size = 100;
     let batches = if total_entries > 0 {
-        (total_entries + batch_size - 1) / batch_size
+        total_entries.div_ceil(batch_size)
     } else {
         0
     };

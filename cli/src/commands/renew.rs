@@ -1,5 +1,5 @@
 use crate::config::NetworkConfig;
-use crate::output::{emit, emit_error, with_spinner, OutputFormat};
+use crate::output::{emit, with_spinner, OutputFormat};
 use crate::signer::SignerProfile;
 use anyhow::Context;
 use serde_json::json;
