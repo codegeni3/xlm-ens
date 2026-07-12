@@ -1,0 +1,6 @@
+[profile.ci]
+# Fail fast so CI surfaces the first failure quickly.
+fail-fast = true
+# Produce JUnit XML for the test-reporter action.
+[profile.ci.junit]
+path = "junit.xml"
