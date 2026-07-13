@@ -4,10 +4,21 @@ mod test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
-    Bytes, BytesN, Env, String, Vec,
+    Bytes, BytesN, Env, Error, IntoVal, String, Symbol, Vec,
 };
 use xlm_ns_common::soroban::{validate_base_name_soroban, validate_fqdn_soroban};
-use xlm_ns_registry::{NameState, RegistryContractClient};
+use xlm_ns_common::RegistryEntry;
+
+/// Mirrors `xlm_ns_registry::NameState` so we can avoid linking the registry
+/// contract (which would cause duplicate WASM export symbols).
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+enum NameState {
+    Missing,
+    Active,
+    GracePeriod,
+    Claimable,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -148,8 +159,13 @@ impl SubdomainContract {
         validate_fqdn_soroban(&parent).map_err(|_| SubdomainError::Validation)?;
         validate_base_name_soroban(&parent).map_err(|_| SubdomainError::Validation)?;
         let key = DataKey::Parent(parent.clone());
-        if let Some(registry_client) = get_registry_client(&env) {
-            match registry_client.try_resolve(&parent, &env.ledger().timestamp()) {
+        if let Some(registry) = get_registry_address(&env) {
+            let now_unix = env.ledger().timestamp();
+            match env.try_invoke_contract::<RegistryEntry, Error>(
+                &registry,
+                &Symbol::new(&env, "resolve"),
+                (parent.clone(), now_unix).into_val(&env),
+            ) {
                 Ok(Ok(entry)) => {
                     if entry.owner != owner {
                         return Err(SubdomainError::Unauthorized);
@@ -459,23 +475,29 @@ fn get_subdomain(env: &Env, fqdn: &String) -> Result<SubdomainRecord, SubdomainE
         .ok_or(SubdomainError::NotFound)
 }
 
-fn get_registry_client<'a>(env: &'a Env) -> Option<RegistryContractClient<'a>> {
+fn get_registry_address(env: &Env) -> Option<Address> {
     env.storage()
         .instance()
         .get::<_, Address>(&DataKey::RegistryContract)
-        .map(|addr| RegistryContractClient::new(env, &addr))
 }
 
 fn ensure_parent_is_active(env: &Env, parent: &String) -> bool {
-    match get_registry_client(env) {
+    match get_registry_address(env) {
         None => true,
-        Some(client) => match client.name_state(parent, &env.ledger().timestamp()) {
-            NameState::Active => true,
-            _ => {
-                purge_parent_namespace(env, parent);
-                false
+        Some(registry) => {
+            let now_unix = env.ledger().timestamp();
+            match env.try_invoke_contract::<NameState, Error>(
+                &registry,
+                &Symbol::new(env, "name_state"),
+                (parent.clone(), now_unix).into_val(env),
+            ) {
+                Ok(Ok(NameState::Active)) => true,
+                _ => {
+                    purge_parent_namespace(env, parent);
+                    false
+                }
             }
-        },
+        }
     }
 }
 
